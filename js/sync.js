@@ -16,7 +16,27 @@
    Device-level config (server URL, tokens, clock skew, PIN salt) lives in
    localStorage — it follows the machine, not the shop. Per-store sync
    cursors and the PIN cache live in the store's own `_syncmeta`.
-   ===================================================================== */
+
+   DEFAULT-ON for the production site: a brand-new browser/phone has never
+   touched Settings, so without this it would stay 100% local — which is
+   exactly what looks like "my data isn't on my other device", not a
+   deliberate offline choice. Every page served from mtx-group.net (or a
+   *.mtx-group.net subdomain) is wired to a real server, so the very first
+   load there configures Sync against that same origin automatically — pick
+   a store, sign in, done. This fires at most once per browser: as soon as
+   `mtx.sync.enabled` has any value (including explicitly turned off via
+   Settings → Server & Sync → Disconnect), it's left alone forever after.
+   Any other host — localhost dev, the Electron build, another install of
+   this codebase — is untouched, exactly as before. ===================== */
+(function bootstrapDefaultSync() {
+  try {
+    if (typeof location === 'undefined' || localStorage.getItem('mtx.sync.enabled') !== null) return;
+    if (!/(^|\.)mtx-group\.net$/.test(location.hostname)) return;
+    localStorage.setItem('mtx.sync.url', location.origin);
+    localStorage.setItem('mtx.sync.enabled', '1');
+  } catch (e) { /* private browsing, storage blocked — falls back to local-only */ }
+})();
+
 const Sync = (() => {
   const LS = {
     enabled: 'mtx.sync.enabled',

@@ -173,7 +173,13 @@ const App = {
       if (sp) { sp.style.opacity = '0'; setTimeout(() => sp.remove(), 500); }
       // Coming back from a refresh mid-shift? Go straight to that store's login.
       const remembered = Tenant.remembered();
+      // Otherwise, a store-specific subdomain (melora.mtx-group.net,
+      // bangeen.mtx-group.net) deep-links straight into its own sign-in
+      // screen. Anything else — bare domain, localhost, the desktop app —
+      // shows the normal two-store picker.
+      const hostStore = Tenant.hostStore();
       if (remembered) await this.enterStore(remembered.id);
+      else if (hostStore) await this.enterStore(hostStore);
       else this.showPicker();
     }, 1600);
   },

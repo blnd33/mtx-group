@@ -107,6 +107,18 @@ const Tenant = (() => {
       try { return api.find(localStorage.getItem(KEY)); } catch (e) { return null; }
     },
 
+    /* Deep link by subdomain: melora.mtx-group.net / bangeen.mtx-group.net
+       (or melora.localhost etc. in dev) drop straight into that store's own
+       sign-in screen instead of the two-store picker. Any other hostname —
+       the bare domain, "localhost", an IP, the packaged desktop app — falls
+       through to the normal picker with both stores. */
+    hostStore() {
+      try {
+        const first = location.hostname.split('.')[0].toLowerCase();
+        return STORES.some((s) => s.id === first) ? first : null;
+      } catch (e) { return null; }
+    },
+
     async set(id) {
       const s = api.find(id);
       if (!s) throw new Error('Unknown store: ' + id);
