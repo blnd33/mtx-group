@@ -24,6 +24,24 @@ out/
 *.sqlite
 *.db
 
+# ---------------------------------------------------------------------
+# SHOP DATA — never commit. This is a public repository.
+#
+# The app downloads exports and backups into whatever folder the browser
+# saves to, which is often this one. They hold real trading data: customer
+# names, phone numbers and balances, supplier terms, every sale — and a
+# whole-system backup also carries staff PINs.
+#
+# Nothing in the project needs these files: the Excel template is generated
+# in the browser by js/xlsx.js, not shipped. If you ever do need to commit a
+# spreadsheet on purpose, force it: git add -f <file>
+# ---------------------------------------------------------------------
+*.xlsx
+*.xls
+*.csv
+*-backup-*.json
+mtx-system-backup-*.json
+
 # OS cruft
 .DS_Store
 Thumbs.db
