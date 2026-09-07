@@ -139,6 +139,57 @@ async function test(name, fn) {
     assert.strictEqual(r.status, 403);
   });
 
+  /* POST /api/erase over real HTTP. The unit test in erase.test.js covers the
+     SQL; this covers the seam it cannot — the route being reachable, the role
+     gate, the typed confirmation, and req.store coming off the token. */
+  await test('POST /api/erase needs the confirmation to match the store', async () => {
+    const r = await authed('/api/erase', { method: 'POST', body: JSON.stringify({ confirm: 'wrong' }) });
+    assert.strictEqual(r.status, 400);
+    assert.match((await j(r)).error, /confirm must equal "melora"/);
+  });
+
+  await test('a cashier token cannot erase', async () => {
+    const cashier = (await j(await authed('/api/users'))).users.find((u) => u.role === 'Cashier');
+    const login = await j(await fetch(`${base}/api/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ store: 'melora', userId: cashier.id, pin: '4321' }),
+    }));
+    const r = await fetch(`${base}/api/erase`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${login.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ confirm: 'melora' }),
+    });
+    assert.strictEqual(r.status, 403);
+  });
+
+  await test('POST /api/erase without a token is 401', async () => {
+    const r = await fetch(`${base}/api/erase`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ confirm: 'melora' }),
+    });
+    assert.strictEqual(r.status, 401);
+  });
+
+  await test('POST /api/erase clears trading data and tells terminals to delete', async () => {
+    await j(await authed('/api/sync/push', {
+      method: 'POST',
+      body: JSON.stringify({ changes: [
+        { store: 'products', id: 'ep1', data: { id: 'ep1', name: 'Serum' }, mtime: Date.now() },
+        { store: 'sales', id: 'es1', data: { id: 'es1', no: 1001, total: 99 }, mtime: Date.now() },
+      ] }),
+    }));
+
+    const r = await authed('/api/erase', { method: 'POST', body: JSON.stringify({ confirm: 'melora' }) });
+    assert.strictEqual(r.status, 200, 'route exists and is reachable');
+    const body = await j(r);
+    assert.ok(body.cleared.products >= 1 && body.cleared.sales >= 1, 'reports what it cleared');
+
+    const feed = await j(await authed('/api/sync/pull?since=0'));
+    const live = ['products', 'sales', 'customers'].flatMap((s) => feed.changes[s] || []).filter((c) => !c.deleted);
+    assert.deepStrictEqual(live, [], 'a terminal syncing from zero is told to delete everything');
+    assert.ok((feed.changes.users || []).some((u) => !u.deleted), 'staff logins survive');
+  });
+
   server.close();
   Module._load = origLoad;
   console.log(out.join('\n'));
