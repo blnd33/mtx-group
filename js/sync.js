@@ -272,7 +272,22 @@ const Sync = (() => {
   async function eraseServer() {
     const store = currentStore();
     if (!store) throw new Error('No store selected');
-    return api('/api/erase', { method: 'POST', store, body: { confirm: store } });
+    try {
+      return await api('/api/erase', { method: 'POST', store, body: { confirm: store } });
+    } catch (e) {
+      /* A 404 here means the server is running an older build. Express reads
+         static files from disk on every request, so a `git pull` updates the
+         app immediately — but Node keeps its required modules in memory, so
+         the routes stay whatever they were at boot until it is restarted.
+         That combination (new page, old API) is easy to misread as the button
+         being broken, so say what it actually is. */
+      if (/^not found$/i.test(e.message) || /404/.test(e.message)) {
+        const err = new Error('the server is still running the old build — it needs restarting (pm2 restart mtx-server)');
+        err.code = 'NOROUTE';
+        throw err;
+      }
+      throw e;
+    }
   }
 
   /* Turn sync off on this device and forget its server state. Local
