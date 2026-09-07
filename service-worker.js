@@ -8,7 +8,7 @@
 /* Bump this on every deploy. The shell is served cache-first, so a stale
    cache will keep showing the previous build's HTML/CSS/JS until the name
    changes and `activate` sweeps the old one away. */
-const CACHE = 'mtx-shell-v11';
+const CACHE = 'mtx-shell-v12';
 
 // NOTE: we cache the clean root ('./') only — never './index.html', which some
 // static servers 301-redirect to './'. A cached redirected response cannot be
@@ -70,7 +70,7 @@ self.addEventListener('fetch', (e) => {
   // Try network first so redirects resolve normally; fall back to cached root offline.
   if (req.mode === 'navigate') {
     e.respondWith(
-      fetch(req).catch(() => caches.match('./') || caches.match('./index.html'))
+      fetch(req).catch(async () => (await caches.match('./')) || caches.match('./index.html'))
     );
     return;
   }

@@ -338,7 +338,11 @@ const App = {
       }
 
       if (!users.length) {
-        pick.innerHTML = '<div class="tiny muted" style="padding:8px 0">This terminal has no users yet. Open <b>Settings → Server &amp; Sync</b> on a connected device, or connect this one, to set it up.</div>';
+        pick.innerHTML = synced
+          ? '<div class="tiny muted" style="padding:8px 0">Could not load this store’s users. Connect to the internet and retry. If it continues, check the server’s user accounts.</div><button class="btn ghost" id="retryUsers">Retry connection</button>'
+          : '<div class="tiny muted" style="padding:8px 0">This terminal has no users yet.</div>';
+        const retry = document.getElementById('retryUsers');
+        if (retry) retry.onclick = () => this.showLogin();
         btn.disabled = true;
         return;
       }
@@ -387,9 +391,10 @@ const App = {
             if (pin !== selected.pin) { btn.disabled = false; return UI.toast('Incorrect PIN', 'err'); }
             this.user = selected;
           }
-          DB.put('logs', { id: UI.uid('log'), ts: Date.now(), user: this.user.name, type: 'login', action: 'signed in' });
-          this.enterApp();
+          await DB.put('logs', { id: UI.uid('log'), ts: Date.now(), user: this.user.name, type: 'login', action: 'signed in' });
+          await this.enterApp();
         } catch (err) {
+          this.user = null;
           console.error(err); btn.disabled = false;
           UI.toast('Sign-in failed: ' + err.message, 'err');
         }
@@ -406,7 +411,7 @@ const App = {
   async syncBootstrap() {
     if (!Sync.configured()) return;
     const store = Tenant.id;
-    const first = !(await DB.meta('cursor:' + store));
+    const first = !(await DB.meta('ready:' + store));
     if (first) {
       const ov = document.createElement('div');
       ov.className = 'overlay';
@@ -420,7 +425,7 @@ const App = {
         } });
         await this.loadAccess();
       } catch (e) {
-        UI.toast('First sync failed: ' + e.message + ' — will keep retrying', 'warn');
+        throw new Error('The store has not finished downloading. ' + e.message + '. Please retry sign-in.');
       } finally {
         ov.remove();
       }
@@ -431,10 +436,13 @@ const App = {
 
   /* ---------------- Screen 3: the app ---------------- */
   async enterApp() {
+    await this.syncBootstrap();
+    await this.loadAccess();
+    UI.setCurrency((await DB.setting('currency')) || 'USD');
+    UI.setRate((await DB.setting('fxRate')) || 1320);
     document.getElementById('login').classList.add('hide');
     document.getElementById('picker').classList.add('hide');
     document.getElementById('app').classList.remove('hide');
-    await this.syncBootstrap();
     this.renderChrome();
     const current = location.hash.replace('#/', '').split('?')[0];
     const target = '#/' + this.homeRoute();
@@ -490,6 +498,7 @@ const App = {
           <button class="icon-btn" id="logoutBtn" title="Sign out">⎋</button>
           ${this.can('pos') ? '<a class="btn primary" href="#/pos">＋ Sale</a>' : ''}
         </header>
+        ${Sync.configured() ? '<div id="syncNotice" class="sync-notice" role="status" aria-live="polite"></div>' : ''}
         <div class="content" id="content"></div>
       </div>`;
 
@@ -530,8 +539,9 @@ const App = {
     if (chip) {
       const txt = document.getElementById('syncChipTxt');
       const MAP = {
-        off: ['', 'Sync off'], idle: ['', 'Sync'], syncing: ['', 'Syncing…'],
-        synced: ['', 'Synced'], offline: ['offline', 'Offline'],
+        off: ['', 'Sync off'], idle: ['', 'Checking server'], syncing: ['', 'Saving…'],
+        pending: ['offline', 'Waiting to upload'],
+        synced: ['', 'Saved on server'], offline: ['offline', 'Offline'],
         error: ['offline', 'Sync error'], 'needs-login': ['offline', 'Sign in'],
       };
       this._syncUnsub = Sync.on((st) => {
@@ -539,6 +549,24 @@ const App = {
         const [cls, label] = MAP[st.status] || ['', 'Sync'];
         chip.className = 'status-chip no-print ' + cls;
         txt.textContent = (st.status === 'offline' && st.queued) ? st.queued + ' queued' : label;
+        const notice = document.getElementById('syncNotice');
+        if (notice) {
+          const messages = {
+            synced: 'Saved on server. Your data is available on other browsers after sign-in.',
+            syncing: 'Syncing with the server. Wait for “Saved on server” before clearing browser data.',
+            pending: 'Changes are waiting to upload. Keep this browser open until they are saved on the server.',
+            offline: 'Offline. New changes stay on this device until the connection returns. Do not clear browser data.',
+            'needs-login': 'Sign in to the server to save your changes. Click here to sign in.',
+            error: 'Changes could not be synced. Click here for details and retry.',
+            idle: 'Checking the server for the latest data…',
+          };
+          notice.textContent = messages[st.status] || label;
+          notice.classList.toggle('saved', st.status === 'synced');
+          notice.onclick = () => {
+            if (st.status === 'needs-login') { this.user = null; this.showLogin(); }
+            else this.showSyncPanel();
+          };
+        }
       });
       chip.onclick = () => this.showSyncPanel();
     }

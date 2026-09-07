@@ -30,9 +30,6 @@ const DB = (() => {
   let _db = null;
   let _name = null;
 
-  /* While true, writes come from applying a pull from the server, so they
-     must NOT be re-queued back into the outbox. */
-  let _applyingRemote = false;
   /* serverTime − Date.now() at the last contact, so every write is stamped
      with a clock all terminals agree on. Set by js/sync.js. */
   let _skew = 0;
@@ -68,13 +65,36 @@ const DB = (() => {
     return open().then((db) => db.transaction(store, mode).objectStore(store));
   }
 
-  /* Record one pending change for the server. Deduped by store+id, so a
-     record edited ten times before the next sync pushes only once (its
-     current state is read live at push time). */
-  async function enqueue(store, id, op) {
-    if (id == null || SYNC_STORES.includes(store)) return;
-    const os = await tx('_outbox', 'readwrite');
-    os.put({ key: store + ':' + id, store, id: String(id), op, mtime: api.now() });
+  const shouldQueue = (store, id) => !SYNC_STORES.includes(store) && store !== 'users'
+    && !(store === 'settings' && ['invoiceSeq', 'seeded'].includes(id));
+  const pending = (store, id, op) => ({ key: store + ':' + id, store, id: String(id),
+    op, mtime: api.now(), revision: crypto.randomUUID() });
+  const completed = (t) => new Promise((resolve, reject) => {
+    t.oncomplete = () => resolve(true);
+    t.onabort = t.onerror = () => reject(t.error || new Error('Database transaction failed'));
+  });
+
+  /* Save the record and its upload intent together: both commit or neither does. */
+  async function write(store, rows, op = 'put') {
+    const queue = syncEnabled() && !SYNC_STORES.includes(store);
+    const db = await open();
+    const t = db.transaction(queue ? [store, '_outbox'] : [store], 'readwrite');
+    const done = completed(t);
+    try {
+      for (const row of rows) {
+        const id = op === 'del' ? row : pkOf(store, row);
+        if (op === 'del') t.objectStore(store).delete(id);
+        else t.objectStore(store).put(row);
+        if (queue && id != null && shouldQueue(store, id)) t.objectStore('_outbox').put(pending(store, id, op));
+      }
+    } catch (err) {
+      t.abort();
+      await done.catch(() => {});
+      throw err;
+    }
+    await done;
+    if (queue) notifyWrite();
+    return true;
   }
   function notifyWrite() {
     try { window.Sync && window.Sync.nudge && window.Sync.nudge(); } catch (e) { /* ignore */ }
@@ -94,17 +114,109 @@ const DB = (() => {
     /* ---- sync plumbing (used by js/sync.js) ---- */
     setClockSkew(ms) { _skew = Number(ms) || 0; },
     now() { return Date.now() + _skew; },
-    /* Run fn while suppressing outbox recording — for applying pulled changes. */
-    async applyRemote(fn) {
-      const prev = _applyingRemote;
-      _applyingRemote = true;
-      try { return await fn(); }
-      finally { _applyingRemote = prev; }
+    /* A formerly local-only browser must not mix its old catalogue with the
+       server's catalogue. Keep a recoverable snapshot, retain queued writes,
+       and rebuild the visible cache from the first authenticated download. */
+    async prepareServerCache(store) {
+      const db = await open();
+      const t = db.transaction([...STORES, '_outbox', '_syncmeta'], 'readwrite');
+      const done = completed(t);
+      const meta = t.objectStore('_syncmeta');
+      const cursor = meta.get('cursor:' + store);
+      cursor.onsuccess = () => {
+        if (cursor.result) return;
+        const prepared = meta.get('prepared:' + store);
+        prepared.onsuccess = () => {
+          if (prepared.result) return;
+          const queued = t.objectStore('_outbox').getAll();
+          queued.onsuccess = () => {
+            const keys = new Set(queued.result.map((e) => e.key));
+            const backup = { meta: { app: 'MTX Group POS', store, exportedAt: Date.now() }, data: {} };
+            let left = STORES.length;
+            for (const s of STORES) {
+              const rows = t.objectStore(s).getAll();
+              rows.onsuccess = () => {
+                backup.data[s] = rows.result;
+                for (const row of rows.result) {
+                  const id = pkOf(s, row);
+                  if (!keys.has(s + ':' + id) && !(s === 'settings' && id === 'invoiceSeq')) t.objectStore(s).delete(id);
+                }
+                if (--left === 0) {
+                  if (Object.values(backup.data).some((rows) => rows.length)) meta.put({ key: 'before-server-connection', value: backup });
+                  meta.put({ key: 'prepared:' + store, value: true });
+                }
+              };
+            }
+          };
+        };
+      };
+      await done;
+    },
+    /* Snapshot payloads and their upload revisions in the same transaction. */
+    async pendingChanges() {
+      const db = await open();
+      const t = db.transaction([...STORES, '_outbox'], 'readonly');
+      const done = completed(t);
+      const changes = [];
+      const r = t.objectStore('_outbox').getAll();
+      r.onsuccess = () => {
+        for (const entry of r.result) {
+          const item = { entry, data: null };
+          changes.push(item);
+          if (entry.op !== 'del') {
+            const get = t.objectStore(entry.store).get(entry.id);
+            get.onsuccess = () => { item.data = get.result; };
+          }
+        }
+      };
+      await done;
+      return changes;
+    },
+    /* An acknowledgement for an older edit must not remove a newer edit. */
+    async acknowledge(entries) {
+      const db = await open();
+      const t = db.transaction('_outbox', 'readwrite');
+      const done = completed(t);
+      const os = t.objectStore('_outbox');
+      for (const entry of entries) {
+        const r = os.get(entry.key);
+        r.onsuccess = () => {
+          const current = r.result;
+          if (current && current.revision === entry.revision && current.mtime === entry.mtime && current.op === entry.op) os.delete(entry.key);
+        };
+      }
+      await done;
+    },
+    /* Apply a pull and advance its cursor atomically. Local pending edits win
+       until they have been uploaded, even when made during the network fetch. */
+    async applyPage(store, page) {
+      const groups = Object.keys(page.changes || {});
+      if (groups.some((s) => !STORES.includes(s))) throw new Error('Unknown data type from server');
+      const db = await open();
+      const t = db.transaction([...groups, '_outbox', '_syncmeta'], 'readwrite');
+      const done = completed(t);
+      let applied = 0;
+      for (const s of groups) for (const row of page.changes[s]) {
+        const r = t.objectStore('_outbox').get(s + ':' + row.id);
+        r.onsuccess = () => {
+          if (r.result) return;
+          if (row.deleted) t.objectStore(s).delete(row.id);
+          else t.objectStore(s).put(s === 'settings' ? { key: row.id, value: row.data } : row.data);
+          applied++;
+        };
+      }
+      t.objectStore('_syncmeta').put({ key: 'cursor:' + store, value: { cursor: page.cursor } });
+      await done;
+      return applied;
     },
     async outbox() { return api.all('_outbox'); },
     async outboxCount() {
-      const os = await tx('_outbox');
-      return new Promise((res) => { const r = os.count(); r.onsuccess = () => res(r.result || 0); r.onerror = () => res(0); });
+      const db = await open();
+      const t = db.transaction('_outbox', 'readonly');
+      const done = completed(t);
+      const r = t.objectStore('_outbox').count();
+      await done;
+      return r.result;
     },
     async outboxDelete(key) { return api.del('_outbox', key); },
     async outboxClear() { return api.clear('_outbox'); },
@@ -113,54 +225,35 @@ const DB = (() => {
        local data. */
     async enqueueAll(store) {
       const list = store ? [store] : STORES;
+      const db = await open();
+      const t = db.transaction([...list, '_outbox'], 'readwrite');
+      const done = completed(t);
       for (const s of list) {
-        const rows = await api.all(s);
-        const osb = await tx('_outbox', 'readwrite');
-        const t = api.now();
-        rows.forEach((v) => {
+        const r = t.objectStore(s).getAll();
+        r.onsuccess = () => r.result.forEach((v) => {
           const id = pkOf(s, v);
-          if (id != null) osb.put({ key: s + ':' + id, store: s, id: String(id), op: 'put', mtime: t });
+          if (id != null && shouldQueue(s, id)) t.objectStore('_outbox').put(pending(s, id, 'put'));
         });
       }
+      await done;
+      notifyWrite();
     },
     /* key/value bag for sync cursors, tokens-adjacent metadata, PIN cache. */
     async meta(key, value) {
       if (value === undefined) {
         const r = await api.get('_syncmeta', key); return r ? r.value : undefined;
       }
-      return (await tx('_syncmeta', 'readwrite')).put({ key, value });
+      return api.put('_syncmeta', { key, value });
     },
     async metaDelete(key) { return api.del('_syncmeta', key); },
 
     /* ---- record CRUD ---- */
     async put(store, val) {
-      const os = await tx(store, 'readwrite');
-      const saved = await new Promise((res, rej) => {
-        const r = os.put(val); r.onsuccess = () => res(val); r.onerror = () => rej(r.error);
-      });
-      if (!_applyingRemote && syncEnabled() && !SYNC_STORES.includes(store)) {
-        await enqueue(store, pkOf(store, val), 'put');
-        notifyWrite();
-      }
-      return saved;
+      await write(store, [val]);
+      return val;
     },
     async bulk(store, arr) {
-      const db = await open();
-      await new Promise((res, rej) => {
-        const t = db.transaction(store, 'readwrite');
-        arr.forEach((v) => t.objectStore(store).put(v));
-        t.oncomplete = () => res(true); t.onerror = () => rej(t.error);
-      });
-      if (!_applyingRemote && syncEnabled() && !SYNC_STORES.includes(store)) {
-        const osb = await tx('_outbox', 'readwrite');
-        const now = api.now();
-        arr.forEach((v) => {
-          const id = pkOf(store, v);
-          if (id != null) osb.put({ key: store + ':' + id, store, id: String(id), op: 'put', mtime: now });
-        });
-        notifyWrite();
-      }
-      return true;
+      return write(store, arr);
     },
     async get(store, id) {
       const os = await tx(store);
@@ -175,21 +268,14 @@ const DB = (() => {
       });
     },
     async del(store, id) {
-      const os = await tx(store, 'readwrite');
-      await new Promise((res, rej) => {
-        const r = os.delete(id); r.onsuccess = () => res(true); r.onerror = () => rej(r.error);
-      });
-      if (!_applyingRemote && syncEnabled() && !SYNC_STORES.includes(store)) {
-        await enqueue(store, id, 'del');
-        notifyWrite();
-      }
-      return true;
+      return write(store, [id], 'del');
     },
     async clear(store) {
-      const os = await tx(store, 'readwrite');
-      return new Promise((res, rej) => {
-        const r = os.clear(); r.onsuccess = () => res(true); r.onerror = () => rej(r.error);
-      });
+      const db = await open();
+      const t = db.transaction(store, 'readwrite');
+      const done = completed(t);
+      t.objectStore(store).clear();
+      return done;
     },
     // Settings helpers (key/value) — go through put(), so they queue for sync too.
     async setting(key, val) {

@@ -10,8 +10,9 @@
      - pulls the server's changes down and applies them locally
      - handles login (online) and caches a PIN so login works offline too
 
-   It is INERT until a server is enabled in Settings. With sync off, none
-   of this runs and the app behaves exactly as the offline-only build.
+   On mtx-group.net the server connection is mandatory and comes from the
+   website address, so a fresh browser always reconnects after sign-in.
+   Local desktop/development installs can still configure sync in Settings.
 
    Device-level config (server URL, tokens, clock skew, PIN salt) lives in
    localStorage — it follows the machine, not the shop. Per-store sync
@@ -33,6 +34,8 @@ const Sync = (() => {
   const listeners = new Set();
   let timer = null;
   let nudgeT = null;
+  let flight = null;
+  let generation = 0;
 
   function emit() {
     for (const fn of listeners) { try { fn(state); } catch (e) { /* ignore */ } }
@@ -44,9 +47,20 @@ const Sync = (() => {
   }
 
   /* ---------------- config ---------------- */
-  const configured = () => lsGet(LS.enabled) === '1';
-  const serverUrl = () => lsGet(LS.url) || (typeof location !== 'undefined' ? location.origin : '');
+  const required = () => {
+    try { return ['mtx-group.net', 'www.mtx-group.net'].includes(new URL(location.origin).hostname); }
+    catch (e) { return false; }
+  };
+  const configured = () => required() || lsGet(LS.enabled) === '1';
+  const serverUrl = () => required() ? location.origin
+    : lsGet(LS.url) || (typeof location !== 'undefined' ? location.origin : '');
   function setServer(url, enabled) {
+    if (required()) {
+      if (!enabled || (url || '').replace(/\/+$/, '') !== location.origin) {
+        throw new Error('This website always uses its server. The connection cannot be disabled.');
+      }
+      return;
+    }
     lsSet(LS.url, (url || '').replace(/\/+$/, ''));
     lsSet(LS.enabled, enabled ? '1' : null);
   }
@@ -58,6 +72,11 @@ const Sync = (() => {
   const token = (store) => lsGet(LS.token(store || currentStore()));
   const setToken = (store, t) => lsSet(LS.token(store), t || null);
   const currentStore = () => (window.Tenant && Tenant.id) || null;
+  function checkContext(ctx) {
+    if (ctx && (ctx.generation !== generation || ctx.store !== currentStore())) {
+      const e = new Error('Store changed — sync cancelled'); e.code = 'CANCELLED'; throw e;
+    }
+  }
 
   /* ---------------- clock skew ---------------- */
   function applyServerTime(serverTime) {
@@ -69,7 +88,8 @@ const Sync = (() => {
   if (window.DB) DB.setClockSkew(Number(lsGet(LS.skew)) || 0);
 
   /* ---------------- HTTP ---------------- */
-  async function api(path, { method = 'GET', body, store, auth = true } = {}) {
+  async function api(path, { method = 'GET', body, store, auth = true, context } = {}) {
+    checkContext(context);
     if (!configured()) { const e = new Error('Sync is off'); e.code = 'OFF'; throw e; }
     const headers = { 'content-type': 'application/json' };
     if (auth) {
@@ -78,18 +98,26 @@ const Sync = (() => {
       headers.authorization = 'Bearer ' + t;
     }
     let res;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
     try {
-      res = await fetch(serverUrl() + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+      res = await fetch(serverUrl() + path, { method, headers, cache: 'no-store', signal: controller.signal,
+        body: body ? JSON.stringify(body) : undefined });
     } catch (netErr) {
       const e = new Error('Cannot reach the server'); e.code = 'NET'; throw e;
+    } finally {
+      clearTimeout(timeout);
     }
+    checkContext(context);
     if (res.status === 401) { const e = new Error('Session expired — sign in again'); e.code = 'UNAUTH'; throw e; }
     if (res.status === 403) { const e = new Error('Not allowed'); e.code = 'FORBIDDEN'; throw e; }
     if (!res.ok) {
       const msg = await res.json().then((j) => j.error).catch(() => null);
       throw new Error(msg || ('Server error ' + res.status));
     }
-    return res.json();
+    const result = await res.json();
+    checkContext(context);
+    return result;
   }
 
   async function testConnection() {
@@ -109,7 +137,7 @@ const Sync = (() => {
     await cachePin(store, userId, pin); // so this user can sign in offline next time
     return r;
   }
-  function signOut(store) { setToken(store || currentStore(), null); }
+  function signOut(store) { setToken(store || currentStore(), null); setStatus('needs-login'); }
 
   /* User management — the server hashes PINs, so these never go through the
      generic sync push. Caller should run a cycle() afterward to pull the
@@ -154,100 +182,134 @@ const Sync = (() => {
   }
 
   /* ---------------- push ---------------- */
-  async function pushOnce(store) {
-    const entries = await DB.outbox();
+  async function pushOnce(store, context) {
+    checkContext(context);
+    const entries = await DB.pendingChanges();
+    checkContext(context);
     if (!entries.length) return { pushed: 0 };
     const BATCH = 300;
     let pushed = 0;
     for (let i = 0; i < entries.length; i += BATCH) {
       const slice = entries.slice(i, i + BATCH);
       const changes = [];
-      for (const e of slice) {
+      for (const { entry: e, data: rec } of slice) {
         if (e.op === 'del') { changes.push({ store: e.store, id: e.id, deleted: true, mtime: e.mtime }); continue; }
-        const rec = await DB.get(e.store, e.id);
         if (rec == null) { changes.push({ store: e.store, id: e.id, deleted: true, mtime: e.mtime }); continue; }
         const data = e.store === 'settings' ? rec.value : rec;
         changes.push({ store: e.store, id: e.id, data, mtime: e.mtime });
       }
-      const r = await api('/api/sync/push', { method: 'POST', store, body: { changes } });
-      // Applied, or lost a conflict, or server-owned — in every case stop
-      // pushing it. A lost conflict is fixed by the pull that follows.
-      for (const a of (r.applied || [])) await DB.outboxDelete(a.store + ':' + a.id);
-      for (const c of (r.conflicts || [])) await DB.outboxDelete(c.store + ':' + c.id);
+      const r = await api('/api/sync/push', { method: 'POST', store, body: { changes }, context });
+      const conflicts = r.conflicts || [];
+      const accepted = [...(r.applied || []), ...conflicts.filter((c) => c.reason === 'stale'
+        || c.reason === 'server-owned' || (c.store === 'users' && c.reason === 'unknown-store'))];
+      const keys = new Set(accepted.map((a) => a.store + ':' + a.id));
+      // A rejected version may have been pulled before our current cursor.
+      // Re-read the feed so the winning server version is restored locally.
+      if (conflicts.some((c) => c.reason === 'stale')) await DB.meta('cursor:' + store, { cursor: 0 });
+      checkContext(context);
+      await DB.acknowledge(slice.map((item) => item.entry).filter((e) => keys.has(e.key)));
+      checkContext(context);
+      if (slice.some((item) => !keys.has(item.entry.key))) throw new Error('The server did not accept all changes. Unsaved changes remain queued.');
       pushed += (r.applied || []).length;
     }
     return { pushed };
   }
 
   /* ---------------- pull ---------------- */
-  async function pullOnce(store, onProgress) {
+  async function pullOnce(store, onProgress, context) {
+    checkContext(context);
     let m = (await DB.meta('cursor:' + store)) || { cursor: 0 };
+    checkContext(context);
     let applied = 0;
     for (let guard = 0; guard < 100000; guard++) {
-      const r = await api('/api/sync/pull?since=' + m.cursor + '&limit=1000', { store });
+      const r = await api('/api/sync/pull?since=' + m.cursor + '&limit=1000', { store, context });
       applyServerTime(r.serverTime);
-      const groups = Object.keys(r.changes || {});
-      if (groups.length) {
-        await DB.applyRemote(async () => {
-          for (const s of groups) {
-            for (const row of r.changes[s]) {
-              applied++;
-              if (row.deleted) { await DB.del(s, row.id).catch(() => {}); continue; }
-              if (s === 'settings') await DB.put('settings', { key: row.id, value: row.data });
-              else await DB.put(s, row.data);
-            }
-          }
-        });
-        if (onProgress) onProgress(applied);
-      }
+      applied += await DB.applyPage(store, r);
+      checkContext(context);
+      if (onProgress) onProgress(applied);
       m = { cursor: r.cursor };
-      await DB.meta('cursor:' + store, m);
       if (!r.hasMore) break;
     }
     return { applied };
   }
 
   /* ---------------- the cycle ---------------- */
-  async function cycle(opts = {}) {
+  function cycle(opts = {}) {
+    if (flight) return flight;
+    const job = runCycle(opts);
+    flight = job;
+    const finish = () => { if (flight === job) flight = null; };
+    job.then(finish, finish);
+    return job;
+  }
+
+  async function runCycle(opts) {
     const store = currentStore();
-    if (!configured() || !store) return;
-    if (state.busy) return;
-    if (!token(store)) { setStatus('needs-login'); return; }
+    const context = { store, generation };
+    if (!configured() || !store) throw new Error('Select a store and connect to the server first');
+    if (!token(store)) {
+      setStatus('needs-login');
+      const e = new Error('Sign in to the server to upload your changes'); e.code = 'NOAUTH'; throw e;
+    }
 
     state.busy = true;
     state.initial = !!opts.initial;
     try {
       setStatus('syncing');
-      await pushOnce(store);
-      const { applied } = await pullOnce(store, opts.onProgress);
+      if (required()) {
+        await DB.prepareServerCache(store);
+        checkContext(context);
+      }
+      let applied = 0;
+      // Drain edits made while an earlier upload was in flight as well.
+      for (let round = 0; round < 10; round++) {
+        if (!navigator.onLine) { const e = new Error('Offline — changes are waiting to upload'); e.code = 'NET'; throw e; }
+        await pushOnce(store, context);
+        checkContext(context);
+        applied += (await pullOnce(store, opts.onProgress, context)).applied;
+        checkContext(context);
+        // Mark the download complete before the final queue check. An edit
+        // committed during this metadata write still needs another upload.
+        await DB.meta('ready:' + store, true);
+        checkContext(context);
+        state.queued = await DB.outboxCount();
+        checkContext(context);
+        if (!state.queued) break;
+      }
+      if (state.queued) { const e = new Error('Changes are still waiting to upload'); e.code = 'PENDING'; throw e; }
       state.lastSyncAt = Date.now();
-      state.queued = await DB.outboxCount();
       setStatus('synced', null);
       if (applied && window.Store) {
         Store.bust();
         const route = ((location.hash || '').replace('#/', '').split('?')[0]) || '';
         // Don't yank the screen out from under a cashier mid-sale.
-        if (window.App && App.route && route !== 'pos' && route !== 'catpos') App.route();
+        if (window.App && App.user && App.route && !state.initial && route !== 'pos' && route !== 'catpos') App.route();
       }
       return { applied };
     } catch (err) {
+      checkContext(context);
       state.queued = await DB.outboxCount().catch(() => state.queued);
+      checkContext(context);
       if (err.code === 'UNAUTH' || err.code === 'NOAUTH') setStatus('needs-login', err.message);
       else if (err.code === 'NET' || !navigator.onLine) setStatus('offline', err.message);
+      else if (err.code === 'PENDING') setStatus('pending', err.message);
       else setStatus('error', err.message);
       if (!opts.silent) console.warn('[sync]', err.message);
       throw err;
     } finally {
-      state.busy = false;
-      state.initial = false;
-      emit();
+      if (context.generation === generation) {
+        state.busy = false;
+        state.initial = false;
+        emit();
+      }
     }
   }
 
   /* Reset the cursor and re-download everything (repair / first run). */
   async function fullResync(onProgress) {
+    if (flight) await flight;
     const store = currentStore();
-    if (!store) return;
+    if (!store) throw new Error('Select a store first');
     await DB.meta('cursor:' + store, { cursor: 0 });
     return cycle({ onProgress, initial: true });
   }
@@ -255,6 +317,7 @@ const Sync = (() => {
   /* One-time: queue every local record for upload. Use when connecting an
      install that already has data the server hasn't seen. */
   async function uploadLocal(onProgress) {
+    if (flight) await flight;
     await DB.enqueueAll();
     state.queued = await DB.outboxCount();
     emit();
@@ -293,6 +356,7 @@ const Sync = (() => {
   /* Turn sync off on this device and forget its server state. Local
      business data is left untouched. */
   async function disconnect() {
+    if (required()) throw new Error('This website always stays connected to its server.');
     stop();
     const store = currentStore();
     if (store) {
@@ -311,13 +375,19 @@ const Sync = (() => {
   function start() {
     stop();
     if (!configured()) { setStatus('off'); return; }
+    state.queued = 0; state.lastSyncAt = 0; state.lastError = null;
     setStatus(navigator.onLine ? 'idle' : 'offline');
-    timer = setInterval(() => cycle({ silent: true }).catch(() => {}), 20000);
+    timer = setInterval(() => cycle({ silent: true }).catch(() => {}), 5000);
     window.addEventListener('online', onOnline);
     document.addEventListener('visibilitychange', onVisible);
     cycle({ silent: true }).catch(() => {});
   }
   function stop() {
+    generation++;
+    flight = null;
+    state.busy = false;
+    state.initial = false;
+    clearTimeout(nudgeT);
     if (timer) clearInterval(timer);
     timer = null;
     window.removeEventListener('online', onOnline);
@@ -326,6 +396,15 @@ const Sync = (() => {
   /* Debounced kick after a local write. */
   function nudge() {
     if (!configured()) return;
+    if (!state.busy || state.status === 'synced') setStatus(!token() ? 'needs-login' : navigator.onLine ? 'pending' : 'offline');
+    const store = currentStore();
+    DB.outboxCount().then((count) => {
+      if (store === currentStore()) {
+        state.queued = count;
+        if (count && state.status === 'synced') setStatus('pending');
+        else emit();
+      }
+    }).catch(() => {});
     clearTimeout(nudgeT);
     nudgeT = setTimeout(() => cycle({ silent: true }).catch(() => {}), 1500);
   }
@@ -333,7 +412,7 @@ const Sync = (() => {
   return {
     on(fn) { listeners.add(fn); fn(state); return () => listeners.delete(fn); },
     getState: () => state,
-    configured, serverUrl, setServer, deviceId, token, testConnection,
+    configured, required, serverUrl, setServer, deviceId, token, testConnection,
     listUsers, login, signOut, hasOfflinePin, verifyPinOffline, saveUser, deleteUser,
     start, stop, cycle, nudge, fullResync, uploadLocal, disconnect,
     eraseServer,

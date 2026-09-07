@@ -111,6 +111,7 @@ const Tenant = (() => {
       const s = api.find(id);
       if (!s) throw new Error('Unknown store: ' + id);
       if (current && current.id === s.id) return s;
+      if (window.Sync) Sync.stop();
       DB.close();                 // drop the previous shop's handle
       if (window.Store) Store.bust();
       current = s;
@@ -121,6 +122,7 @@ const Tenant = (() => {
     },
 
     clear() {
+      if (window.Sync) Sync.stop();
       DB.close();
       if (window.Store) Store.bust();
       current = null;

@@ -987,3 +987,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 @media (max-width: 1100px) {
   .catpos { grid-template-columns: 1fr; }
 }
+/* Save status stays visible on phones as well as desktop tills. */
+.sync-notice { padding: 9px 24px; background: #fff4dc; color: #6f4900; font-size: 12px; line-height: 1.5; cursor: pointer; }
+.sync-notice.saved { background: #e8f5ec; color: #205c36; }
+@media print { .sync-notice { display: none; } }

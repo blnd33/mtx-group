@@ -124,7 +124,6 @@ function loadClient(file) {
       `UPDATE products SET data = $1::jsonb, client_mtime = $2, seq = nextval('change_seq') WHERE id = 'p1'`,
       [JSON.stringify({ id: 'p1', name: 'Crystal Vase', price: 80000, stock: 1 }), Date.now() + 60000]);
     // local makes an older edit
-    await DB.applyRemote(() => {}); // no-op, keep lint happy
     DB.setClockSkew(-120000);       // pretend this terminal's clock is 2 min behind
     await DB.put('products', { id: 'p1', name: 'STALE EDIT', price: 1, stock: 999 });
     DB.setClockSkew(0);

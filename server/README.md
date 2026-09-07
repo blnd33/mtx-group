@@ -274,6 +274,39 @@ For a real end-to-end check, run `docker compose up -d`, `npm run setup`,
 
 ## Connecting the app (done — Phase 2)
 
+### Published website: mtx-group.net
+
+The website now always uses its own `/api` backend. Both `mtx-group.net` and
+`www.mtx-group.net` enable server sync automatically, even after all browser
+storage is cleared. Browser settings cannot disable or redirect this connection.
+Users sign in with their **server account and PIN**; the local-only starter PIN
+is not a replacement for a server account.
+
+The first complete download must succeed before a fresh browser opens the store.
+The status banner distinguishes saved records, pending uploads, offline operation,
+and expired sessions. Only records confirmed as **Saved on server** can be
+recovered after clearing browser storage. Pending offline changes still require
+the original browser to reconnect and upload them.
+
+On the first connection from an old local-only browser, the previous local data
+is archived in that browser and the visible cache is rebuilt from the server.
+Already queued changes are retained. The archive can be downloaded from
+**Settings → Server & Sync → Download previous local data**. It is not uploaded
+automatically, so an old browser cannot silently restore an obsolete catalogue.
+
+To deploy this update, run `git pull --ff-only origin main` in the existing
+Hostinger checkout. This release changes frontend assets; it needs no database
+migration or reset. If the backend serves a copied build directory, update those
+assets using the existing deployment process. The service-worker cache version
+is `mtx-shell-v12`; refreshing the website installs the update without clearing
+business data. Keep all existing server environment variables and databases.
+
+After deployment, verify `/api/health`, sign in, add a test product and wait for
+**Saved on server**. Sign in to the same store in a fresh browser and verify it.
+Then clear only the test browser's site data, sign in again, and verify recovery.
+
+### Local desktop/development installs
+
 The frontend sync layer ships in `js/sync.js` + `js/db.js`. To point a terminal
 at this server:
 

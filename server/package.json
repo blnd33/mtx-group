@@ -13,7 +13,7 @@
     "import": "node src/import.js",
     "dev": "node --watch src/index.js",
     "smoke": "node test/smoke.js",
-    "test": "node test/smoke.js && node test/sync.test.js && node test/erase.test.js && node test/http.test.js && node test/client-sync.test.js",
+    "test": "node test/smoke.js && node test/sync.test.js && node test/erase.test.js && node test/http.test.js && node test/client-sync.test.js && node test/persistence.test.js",
     "verify": "node src/verify.js"
   },
   "dependencies": {

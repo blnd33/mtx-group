@@ -175,14 +175,15 @@ Views.settings = async (root, initialTab = 'store') => {
       const st = Sync.getState();
       return `<div class="card" style="max-width:680px">
         <div class="section-title">Server & Sync</div>
-        <p class="muted tiny" style="margin-top:-6px;margin-bottom:14px">Connect this terminal to your server so tills share one set of data.
-          The app keeps working offline and syncs when the connection is back. Disconnected, it runs entirely on its own local data (the current behaviour) and sends nothing anywhere.</p>
+        <p class="muted tiny" style="margin-top:-6px;margin-bottom:14px">${Sync.required()
+          ? 'This website automatically connects to its server on every browser. Wait for “Saved on server” before clearing browser data. Offline changes upload when you reconnect and sign in.'
+          : 'Connect this terminal to your server so tills share one set of data. Offline changes upload when the connection returns. Without a server connection, records exist only in this browser.'}</p>
 
         <div class="field"><label>Server address</label>
           <input class="input mono" id="sy_url" placeholder="https://pos.yourdomain.com" value="${UI.esc(Sync.serverUrl())}" ${on ? 'disabled' : ''}></div>
         <div class="row wrap" style="gap:10px;margin-top:8px">
           ${on
-            ? '<button class="btn ghost" id="sy_disc">Disconnect this terminal</button>'
+            ? (Sync.required() ? '<span class="badge green">Automatic server connection</span>' : '<button class="btn ghost" id="sy_disc">Disconnect this terminal</button>')
             : '<button class="btn ghost" id="sy_test">Test connection</button><button class="btn primary" id="sy_enable">Connect this terminal</button>'}
         </div>
         <div class="tiny" id="sy_testout" style="margin-top:10px"></div>
@@ -199,6 +200,8 @@ Views.settings = async (root, initialTab = 'store') => {
           <button class="btn ghost" id="sy_now">Sync now</button>
           <button class="btn ghost" id="sy_upload">Upload this terminal's data</button>
           <button class="btn ghost" id="sy_resync">Full re-download</button>
+          <button class="btn ghost" id="sy_signin">Sign in again</button>
+          <button class="btn ghost" id="sy_archive">Download previous local data</button>
         </div>
         <p class="tiny muted" style="margin-top:10px"><b>Upload</b> pushes every local record to the server — do this once when first connecting a terminal that already holds data. <b>Full re-download</b> replaces local data with the server's copy.</p>`
         : ''}
@@ -231,6 +234,16 @@ Views.settings = async (root, initialTab = 'store') => {
         const url = () => b.querySelector('#sy_url').value.trim().replace(/\/+$/, '');
         const out = b.querySelector('#sy_testout');
         const reload = () => Views.settings(root, 'sync');
+        const signIn = b.querySelector('#sy_signin');
+        if (signIn) signIn.onclick = () => { App.user = null; App.showLogin(); };
+        const archive = b.querySelector('#sy_archive');
+        if (archive) archive.onclick = async () => {
+          const backup = await DB.meta('before-server-connection');
+          if (!backup) return UI.toast('No previous local data was found on this browser', 'info');
+          const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }));
+          const a = document.createElement('a'); a.href = url; a.download = Tenant.id + '-before-server-backup.json'; a.click();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        };
 
         const testBtn = b.querySelector('#sy_test');
         if (testBtn) testBtn.onclick = async () => {
@@ -733,7 +746,9 @@ Views.offline = async (root) => {
            ['🖨️', 'Local Printing', 'Receipts print directly from the browser to thermal/A4 printers.', 'green', 'Ready'],
            ['📷', 'Barcode Scanning', 'USB/Bluetooth scanners work as keyboard input — no internet needed.', 'green', 'Ready'],
            ['💾', 'Backups', 'Manual only — download a backup file yourself from Backup & Restore.', 'amber', 'Manual'],
-           ['☁️', 'Cloud Sync', 'Not available. This device does not share data with any other device.', 'gray', 'None']
+           ['☁️', 'Cloud Sync', Sync.configured()
+             ? 'Connected to the store server. Wait for “Saved on server” before clearing local data. Pending offline changes exist only on this device.'
+             : 'Not connected. Records exist only on this device. Connect in Settings → Server & Sync.', Sync.configured() ? 'green' : 'amber', Sync.configured() ? UI.esc(Sync.getState().status) : 'Not connected']
           ].map((r) => `<div class="list-item"><div class="thumb-sm">${r[0]}</div><div class="grow"><b>${r[1]}</b><div class="tiny muted">${r[2]}</div></div><span class="badge ${r[3]}">${r[4]}</span></div>`).join('')}
       </div>
       <div class="card"><div class="card-head"><h3>Storage Usage</h3></div>
