@@ -74,6 +74,12 @@ Views.catpos = async (root) => {
 
   const cur = UI.currency();
 
+  /* Calculator extras come from the store registry, so a shop that sells in
+     whole thousands gets the plain pad and nothing here renders. */
+  const ext = (Tenant.get() && Tenant.get().catpos) || {};
+  const dec = !!ext.decimal;
+  const quick = Array.isArray(ext.quickAdd) ? ext.quickAdd : [];
+
   root.innerHTML = `
     <div class="page-head">
       <div><h1>Cat POS</h1><div class="sub">Sell by category with the calculator — number × <b>${UI.num(CATPOS_STEP)}</b></div></div>
@@ -96,11 +102,17 @@ Views.catpos = async (root) => {
             <div class="cp-pad-display mono muted" id="cpDisplay">${UI.money(0)}</div>
             <div class="cp-keys" id="cpKeys">
               ${[7, 8, 9, 4, 5, 6, 1, 2, 3].map((n) => `<button class="cp-key" data-k="${n}">${n}</button>`).join('')}
-              <button class="cp-key zero" data-k="0">0</button>
+              ${dec ? '<button class="cp-key" data-k="." title="Decimal point">.</button>' : ''}
+              <button class="cp-key ${dec ? '' : 'zero'}" data-k="0">0</button>
               <button class="cp-key back" data-k="back" title="Backspace">⌫</button>
             </div>
+            ${quick.length ? `<div class="cp-quick" id="cpQuick">
+              ${quick.map((q) => `<button class="cp-key quick" data-q="${q}" title="Add ${UI.money(q)} to this category">+${UI.num(q)}</button>`).join('')}
+            </div>` : ''}
             <button class="btn primary block cp-x" id="cpX">PRESS X</button>
-            <div class="cp-hint">Number × ${UI.num(CATPOS_STEP)} ${cur.code}. Example: press 5 then X = ${UI.money(5 * CATPOS_STEP)}.</div>
+            <div class="cp-hint">Number × ${UI.num(CATPOS_STEP)} ${cur.code}. Example: press 5 then X = ${UI.money(5 * CATPOS_STEP)}.${
+              dec ? `<br>Decimals work too: 1.8 then X = ${UI.money(1.8 * CATPOS_STEP)}.` : ''}${
+              quick.length ? `<br>${quick.map((q) => '+' + UI.num(q)).join(' / ')} tops up the category already in the cart.` : ''}</div>
           </div>
         </div>
 
@@ -280,11 +292,56 @@ Views.catpos = async (root) => {
     UI.toast(catName(CATPAD.cat) + '  +' + UI.money(amount));
   };
 
+  /* One place that decides what a keypress does to the typed value, so the
+     on-screen keys and the physical keyboard can never drift apart. */
+  const typeKey = (k) => {
+    if (k === 'back') { CATPAD.typed = CATPAD.typed.slice(0, -1); return; }
+    if (k === '.') {
+      if (!dec || CATPAD.typed.includes('.')) return;   // one point only
+      CATPAD.typed = (CATPAD.typed || '0') + '.';       // ".5" would read oddly
+      return;
+    }
+    if (CATPAD.typed.length >= 8) return;
+    let t = CATPAD.typed + k;
+    // Drop a leading zero on a whole number ("07" -> "7") but never on "0.5".
+    if (!t.includes('.')) t = t.replace(/^0+(?=\d)/, '');
+    CATPAD.typed = t;
+  };
+
+  /* A number the calculator can hold, from a money amount. Rounded to three
+     places so 250/1000 gives "0.25" rather than a floating-point tail. */
+  const toTyped = (money) => String(Math.round((money / CATPOS_STEP) * 1000) / 1000);
+
+  /* +250 / +500. Mid-entry it folds into what is being typed; otherwise it
+     tops up the category already in the cart — which is the everyday use:
+     press 1, X (1,000), then +250 to make it 1,250. With nothing to top up
+     it seeds the display so X can commit it. */
+  const pressQuick = (amt) => {
+    if (CATPAD.typed) {
+      CATPAD.typed = toTyped(UI.roundTo((Number(CATPAD.typed) || 0) * CATPOS_STEP + amt));
+      drawPad();
+      return;
+    }
+    const line = CATPAD.cat && CATCART.lines.find((l) => l.catId === CATPAD.cat);
+    if (line) {
+      line.price = UI.roundTo(line.price + amt);
+      drawCart();
+      UI.toast(line.name + '  +' + UI.money(amt) + ' = ' + UI.money(line.price));
+      return;
+    }
+    CATPAD.typed = toTyped(amt);
+    drawPad();
+  };
+
   root.querySelector('#cpKeys').addEventListener('click', (e) => {
     const b = e.target.closest('[data-k]'); if (!b) return;
-    if (b.dataset.k === 'back') CATPAD.typed = CATPAD.typed.slice(0, -1);
-    else if (CATPAD.typed.length < 7) CATPAD.typed = (CATPAD.typed + b.dataset.k).replace(/^0+/, '');
+    typeKey(b.dataset.k);
     drawPad();
+  });
+  const quickEl = root.querySelector('#cpQuick');
+  if (quickEl) quickEl.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-q]'); if (!b) return;
+    pressQuick(Number(b.dataset.q) || 0);
   });
   root.querySelector('#cpX').onclick = pressX;
 
@@ -313,8 +370,10 @@ Views.catpos = async (root) => {
     const el = document.activeElement;
     if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
     if (document.querySelector('.overlay')) return;
-    if (e.key.length === 1 && e.key >= '0' && e.key <= '9') { if (CATPAD.typed.length < 7) CATPAD.typed = (CATPAD.typed + e.key).replace(/^0+/, ''); drawPad(); }
-    else if (e.key === 'Backspace') { CATPAD.typed = CATPAD.typed.slice(0, -1); drawPad(); }
+    if (e.key.length === 1 && e.key >= '0' && e.key <= '9') { typeKey(e.key); drawPad(); }
+    // Comma too: the numeric keypad prints one instead of a point in several locales.
+    else if (dec && (e.key === '.' || e.key === ',')) { typeKey('.'); drawPad(); }
+    else if (e.key === 'Backspace') { typeKey('back'); drawPad(); }
     else if (e.key === 'Enter' || e.key === '*') { e.preventDefault(); pressX(); }
   };
   document.addEventListener('keydown', onKey);

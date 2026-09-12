@@ -68,6 +68,11 @@ const STORES = [
         ['📈', 'Daily takings, profit and low-stock alerts']
       ]
     },
+    /* Cat POS calculator extras, Bangeen only.
+       Crystal is priced in part-thousands (1,500 / 1,800) and topped up in
+       250s, so this pad gets a decimal point and quick-add keys. Melora sells
+       in whole thousands and has neither — omit the key and nothing renders. */
+    catpos: { decimal: true, quickAdd: [250, 500] },
     /* Accent palette lifted from the Bangeen identity (antique gold) */
     theme: {
       '--primary': '#A87D2E',

@@ -934,6 +934,14 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .cp-key:active { transform: translateY(1px); }
 .cp-key.zero { grid-column: span 2; }
 .cp-key.back { color: var(--red); font-size: 18px; }
+/* Quick-add row (+250 / +500) — accent-tinted so it reads as a different
+   action from the digits above it. Only rendered for stores that ask for it. */
+.cp-quick { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 10px; margin-top: 10px; }
+.cp-key.quick {
+  font-size: 16px; font-weight: 700; color: var(--primary);
+  background: var(--primary-soft); border-color: var(--border);
+}
+.cp-key.quick:hover { border-color: var(--primary); }
 .cp-x { margin-top: 12px; padding: 16px 0; font-size: 16px; letter-spacing: 2px; }
 .cp-hint { font-size: 11.5px; color: var(--text-3); text-align: center; margin-top: 10px; line-height: 1.55; }
 
