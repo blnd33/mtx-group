@@ -91,6 +91,12 @@ const Store = (() => {
       return {
         periodSales, periodProfit, periodExpense, periodCost, orders,
         avgTicket: orders ? periodSales / orders : 0,
+        /* Running totals for the whole business, deliberately ignoring the
+           range. The dashboard shows these beside the period figures so the
+           page still means something on a morning with no sales yet — without
+           them, every tile reads zero and it looks broken. */
+        totalOrders: sales.filter(isSale).length,
+        totalRevenue: sales.reduce((a, s) => a + s.total, 0),
         cashDrawer: (drawer.opening || 0) + cashSales - cashExp,        // today, always
         invValue: products.reduce((a, p) => a + p.cost * p.stock, 0),   // right now
         lowStock: products.filter((p) => p.stock <= (p.minStock || 0)), // right now

@@ -54,14 +54,14 @@ Views.dashboard = async (root) => {
 
     body.innerHTML = `
     <div class="stats" style="margin-bottom:16px">
-      ${stat('💵', '', 'Sales', UI.money(m.periodSales), '+' + m.orders + ' <span>orders</span>')}
-      ${stat('📈', 'g', 'Net Profit', UI.money(m.periodProfit - m.periodExpense), m.marginTxt)}
-      ${stat('🧾', 'o', 'Expenses', UI.money(m.periodExpense), null)}
+      ${stat('💵', '', `Sales <span class="tiny muted">· ${lbl.name}</span>`, UI.money(m.periodSales), '+' + m.orders + ' <span>orders</span>')}
+      ${stat('📈', 'g', `Net Profit <span class="tiny muted">· ${lbl.name}</span>`, UI.money(m.periodProfit - m.periodExpense), m.marginTxt)}
+      ${stat('🧾', 'o', `Expenses <span class="tiny muted">· ${lbl.name}</span>`, UI.money(m.periodExpense), null)}
       ${stat('🪙', 'c', 'Cash in Drawer <span class="tiny muted">· today</span>', UI.money(m.cashDrawer), null)}
     </div>
     <div class="stats" style="margin-bottom:22px">
-      ${stat('🛒', '', 'Orders', UI.num(m.orders), null)}
-      ${stat('💰', 'g', 'Avg Ticket', UI.money(m.avgTicket), null)}
+      ${stat('🛒', '', 'Total Orders <span class="tiny muted">· all time</span>', UI.num(m.totalOrders), null)}
+      ${stat('💰', 'g', 'Total Revenue <span class="tiny muted">· all time</span>', UI.money(m.totalRevenue), null)}
       ${stat('📦', 'c', 'Inventory Value <span class="tiny muted">· now</span>', UI.money(m.invValue), null)}
       ${stat('⚠️', 'r', 'Low-stock Items <span class="tiny muted">· now</span>', UI.num(m.lowStock.length), m.lowStock.length ? 'Needs attention' : 'All good')}
     </div>
