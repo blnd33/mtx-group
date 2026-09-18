@@ -4,39 +4,72 @@
 
 /* ------------------------------ FINANCE ------------------------------ */
 Views.finance = async (root) => {
-  const sales = await Store.sales();
-  const expenses = await DB.all('expenses');
+  const allSales = await Store.sales();
+  const allExpenses = await DB.all('expenses');
   const custs = await Store.customers();
   const sups = await Store.suppliers();
   const payments = await DB.all('payments');
 
-  const gross = sales.reduce((s, x) => s + x.total, 0);
-  const cogs = sales.reduce((s, x) => s + (x.cost || 0), 0);
-  const exp = expenses.reduce((s, x) => s + x.amount, 0);
-  const grossProfit = gross - cogs;
-  const net = grossProfit - exp;
+  /* Balances and the drawer are "right now" figures, not period ones: a
+     customer's debt is what they owe today whenever you ask, and the drawer is
+     a per-day concept. Only the trading figures inside render() follow the
+     date filter — these are deliberately left outside it. */
   const custDebt = custs.reduce((s, c) => s + (c.debt || 0), 0);
   const supDebt = sups.reduce((s, x) => s + (x.debt || 0), 0);
   const drawer = await DB.setting('drawer') || { opening: 0 };
-  const cashSales = sales.filter((s) => s.pay === 'Cash' && UI.isToday(s.ts)).reduce((a, s) => a + s.total, 0);
-  const cashExp = expenses.filter((e) => e.pay === 'Cash' && UI.isToday(e.ts)).reduce((a, e) => a + e.amount, 0);
+  const cashSales = allSales.filter((s) => s.pay === 'Cash' && UI.isToday(s.ts)).reduce((a, s) => a + s.total, 0);
+  const cashExp = allExpenses.filter((e) => e.pay === 'Cash' && UI.isToday(e.ts)).reduce((a, e) => a + e.amount, 0);
   const cashInDrawer = (drawer.opening || 0) + cashSales - cashExp;
 
-  // payment method split (net of refunds; clamp so the donut can't draw a negative slice)
-  const byPay = {}; sales.forEach((s) => byPay[s.pay] = (byPay[s.pay] || 0) + s.total);
-  const payColors = { Cash: '#22C55E', Card: '#2F6BFF', Split: '#3FD8FF', Debt: '#FF8A3D' };
-  const donutParts = Object.entries(byPay).map(([k, v]) => ({ l: k, v: Math.max(0, v), c: payColors[k] || '#7D90B3' }));
-
-  // monthly cashflow
-  const months = {};
-  const monLoc = App.lang === 'ar' ? 'ar' : undefined;
-  sales.forEach((s) => { const k = new Date(s.ts).toLocaleString(monLoc, { month: 'short' }); months[k] = months[k] || { in: 0, out: 0 }; months[k].in += s.total; });
-  expenses.forEach((e) => { const k = new Date(e.ts).toLocaleString(monLoc, { month: 'short' }); months[k] = months[k] || { in: 0, out: 0 }; months[k].out += e.amount; });
+  // All-time by default — what this page showed before it had a filter.
+  const state = { preset: 'all', ...UI.rangeOf('all') };
 
   root.innerHTML = `
     <div class="page-head"><div><h1>Financial Center</h1><div class="sub">Profit & loss, cash flow, debts and balances</div></div>
       <div class="row"><button class="btn ghost" id="mngDrawer">🪙 Cash Drawer</button><a class="btn primary" href="#/reports">📊 Full Reports</a></div></div>
 
+    ${UI.dateFilterHTML(state.preset)}
+    <div id="finBody"></div>`;
+
+  const body = root.querySelector('#finBody');
+
+  const render = () => {
+    const sales = allSales.filter((s) => UI.inRange(state, s.ts));
+    const expenses = allExpenses.filter((e) => UI.inRange(state, e.ts));
+
+    const gross = sales.reduce((s, x) => s + x.total, 0);
+    const cogs = sales.reduce((s, x) => s + (x.cost || 0), 0);
+    const exp = expenses.reduce((s, x) => s + x.amount, 0);
+    const grossProfit = gross - cogs;
+    const net = grossProfit - exp;
+
+    // payment method split (net of refunds; clamp so the donut can't draw a negative slice)
+    const byPay = {}; sales.forEach((s) => byPay[s.pay] = (byPay[s.pay] || 0) + s.total);
+    const payColors = { Cash: '#22C55E', Card: '#2F6BFF', Split: '#3FD8FF', Debt: '#FF8A3D' };
+    const donutParts = Object.entries(byPay).map(([k, v]) => ({ l: k, v: Math.max(0, v), c: payColors[k] || '#7D90B3' }));
+
+    /* Cash flow by month. Keyed by year-month rather than the month name, or a
+       range spanning more than a year folds last September into this one. */
+    const months = {};
+    const monLoc = App.lang === 'ar' ? 'ar' : undefined;
+    const bump = (ts, field, amt) => {
+      const k = UI.monthKey(ts);
+      months[k] = months[k] || { in: 0, out: 0 };
+      months[k][field] += amt;
+    };
+    sales.forEach((s) => bump(s.ts, 'in', s.total));
+    expenses.forEach((e) => bump(e.ts, 'out', e.amount));
+    const monthRows = Object.keys(months).sort().map((k) => ({
+      label: UI.parseDayKey(k + '-01').toLocaleString(monLoc, { month: 'short', year: 'numeric' }),
+      ...months[k],
+    }));
+
+    const lbl = UI.rangeLabel(state);
+    root.querySelector('#df_summary').innerHTML = (sales.length || expenses.length)
+      ? `<b>${lbl.name}</b> · ${lbl.span} · ${sales.length} <span>invoices</span> · ${expenses.length} <span>expenses</span>`
+      : `<b>${lbl.name}</b> · ${lbl.span} · <span>no records in this range</span>`;
+
+    body.innerHTML = `
     <div class="stats" style="margin-bottom:16px">
       <div class="stat"><div class="ico g">💰</div><div class="label">Gross Revenue</div><div class="value mono">${UI.money(gross)}</div></div>
       <div class="stat"><div class="ico">📦</div><div class="label">Cost of Goods</div><div class="value mono">${UI.money(cogs)}</div></div>
@@ -45,7 +78,7 @@ Views.finance = async (root) => {
     </div>
 
     <div class="grid" style="grid-template-columns:1.4fr 1fr">
-      <div class="card"><div class="card-head"><h3>Profit & Loss Statement</h3><span class="badge blue">All-time</span></div>
+      <div class="card"><div class="card-head"><h3>Profit & Loss Statement</h3><span class="badge blue">${lbl.name}</span></div>
         <div class="kv"><span class="k">Sales income</span><b class="v mono">${UI.money(gross)}</b></div>
         <div class="kv"><span class="k">− Cost of goods sold</span><b class="v mono text-red">${UI.money(cogs)}</b></div>
         <div class="kv"><span class="k" style="font-weight:700">= Gross profit</span><b class="v mono text-green">${UI.money(grossProfit)}</b></div>
@@ -60,17 +93,17 @@ Views.finance = async (root) => {
     </div>
 
     <div class="grid" style="grid-template-columns:1fr 1fr 1fr;margin-top:18px">
-      <div class="card"><div class="section-title">Cash Drawer</div>
+      <div class="card"><div class="section-title">Cash Drawer <span class="tiny muted" style="font-weight:400">· today, not the range</span></div>
         <div class="kv"><span class="k">Opening balance</span><b class="v mono">${UI.money(drawer.opening || 0)}</b></div>
         <div class="kv"><span class="k">＋ Cash sales</span><b class="v mono text-green">${UI.money(cashSales)}</b></div>
         <div class="kv"><span class="k">− Cash expenses</span><b class="v mono text-red">${UI.money(cashExp)}</b></div>
         <div class="kv"><span class="k" style="font-weight:800">Expected in drawer</span><b class="v mono" style="font-size:16px">${UI.money(cashInDrawer)}</b></div>
       </div>
-      <div class="card"><div class="section-title">Receivables (Customer debt)</div>
+      <div class="card"><div class="section-title">Receivables (Customer debt) <span class="tiny muted" style="font-weight:400">· balance now</span></div>
         <div class="value mono" style="font-size:26px;font-weight:800;color:var(--orange)">${UI.money(custDebt)}</div>
         <div class="tiny muted"><span>Owed to you by</span> ${custs.filter((c) => c.debt > 0).length} <span>customers</span></div>
         <a class="btn ghost sm block" href="#/customers" style="margin-top:12px">Manage debts →</a></div>
-      <div class="card"><div class="section-title">Payables (Supplier debt)</div>
+      <div class="card"><div class="section-title">Payables (Supplier debt) <span class="tiny muted" style="font-weight:400">· balance now</span></div>
         <div class="value mono" style="font-size:26px;font-weight:800;color:var(--red)">${UI.money(supDebt)}</div>
         <div class="tiny muted"><span>You owe</span> ${sups.filter((s) => s.debt > 0).length} <span>suppliers</span></div>
         <a class="btn ghost sm block" href="#/suppliers" style="margin-top:12px">Manage payables →</a></div>
@@ -78,7 +111,10 @@ Views.finance = async (root) => {
 
     <div class="card" style="margin-top:18px"><div class="card-head"><h3>Monthly Cash Flow</h3></div>
       <div class="table-wrap"><table class="tbl"><thead><tr><th>Month</th><th class="right">Cash In</th><th class="right">Cash Out</th><th class="right">Net</th></tr></thead>
-      <tbody>${Object.entries(months).map(([m, v]) => `<tr><td><b>${m}</b></td><td class="right mono text-green">${UI.money(v.in)}</td><td class="right mono text-red">${UI.money(v.out)}</td><td class="right mono"><b>${UI.money(v.in - v.out)}</b></td></tr>`).join('')}</tbody></table></div></div>`;
+      <tbody>${monthRows.length
+        ? monthRows.map((m) => `<tr><td><b>${m.label}</b></td><td class="right mono text-green">${UI.money(m.in)}</td><td class="right mono text-red">${UI.money(m.out)}</td><td class="right mono"><b>${UI.money(m.in - m.out)}</b></td></tr>`).join('')
+        : '<tr><td colspan="4" class="muted" style="text-align:center;padding:18px">No cash movement in this range</td></tr>'}</tbody></table></div></div>`;
+  };
 
   root.querySelector('#mngDrawer').onclick = () => {
     UI.modal({
@@ -90,6 +126,9 @@ Views.finance = async (root) => {
     });
     document.getElementById('dr_ok').onclick = async () => { await DB.setting('drawer', { opening: +document.getElementById('dr_open').value || 0, ts: Date.now() }); UI.close(); UI.toast('Drawer updated'); Views.finance(root); };
   };
+
+  UI.bindDateFilter(root, state, render);
+  render();
 };
 
 /* ------------------------------ REPORTS ------------------------------ */

@@ -17,55 +17,86 @@ const Store = (() => {
     sales: () => get('sales'),
     customers: () => get('customers'),
     suppliers: () => get('suppliers'),
-    async metrics() {
+    /* Dashboard figures. `range` is a date-filter state ({from, to}); with
+       none the period is today, which is what this returned before it took an
+       argument.
+
+       Two things deliberately ignore the range: the cash drawer is a per-day
+       float, and stock valuation is what sits on the shelf right now. Both are
+       labelled as such on the dashboard so they don't look stuck. */
+    async metrics(range) {
       const sales = await get('sales');
       const products = await get('products');
       const expenses = await DB.all('expenses');
       const now = new Date();
-      const isSale = (s) => s.type === 'sale'; // only true sales are "orders"; refunds & exchanges net money but don't count
-      const todays = sales.filter((s) => UI.isToday(s.ts));
-      const todaySales = todays.reduce((a, s) => a + s.total, 0);   // net of refunds
-      const todayProfit = todays.reduce((a, s) => a + s.profit, 0); // net of refunds
-      const todayExpense = expenses.filter((e) => UI.isToday(e.ts)).reduce((a, e) => a + e.amount, 0);
+      const isSale = (s) => s.type === 'sale'; // refunds & exchanges net money but aren't orders
+      const inPeriod = (ts) => (range ? UI.inRange(range, ts) : UI.isToday(ts));
 
-      // Cash drawer is a per-day concept: opening float + today's cash in − today's cash out
+      const pSales = sales.filter((s) => inPeriod(s.ts));
+      const pExp = expenses.filter((e) => inPeriod(e.ts));
+
+      const periodSales = pSales.reduce((a, s) => a + s.total, 0);   // net of refunds
+      const periodProfit = pSales.reduce((a, s) => a + s.profit, 0); // net of refunds
+      const periodCost = pSales.reduce((a, s) => a + (s.cost || 0), 0);
+      const periodExpense = pExp.reduce((a, e) => a + e.amount, 0);
+      const orders = pSales.filter(isSale).length;
+
+      // Cash drawer stays per-day: opening float + today's cash in − today's cash out
       const drawer = await DB.setting('drawer') || { opening: 0 };
+      const todays = sales.filter((s) => UI.isToday(s.ts));
       const cashSales = todays.filter((s) => s.pay === 'Cash').reduce((a, s) => a + s.total, 0);
       const cashExp = expenses.filter((e) => e.pay === 'Cash' && UI.isToday(e.ts)).reduce((a, e) => a + e.amount, 0);
 
-      // last 7 days
-      const last7 = [];
-      for (let i = 6; i >= 0; i--) {
-        const d = new Date(now); d.setDate(d.getDate() - i);
-        const key = UI.dayKey(d.getTime());
-        const total = sales.filter((s) => UI.dayKey(s.ts) === key).reduce((a, s) => a + s.total, 0);
-        last7.push({ label: d.toLocaleDateString(App.lang === 'ar' ? 'ar' : undefined, { weekday: 'short' }), total });
+      /* Trend across the period. With no filter it stays the familiar
+         last-7-days sparkline; with one it buckets the range by day, or by
+         month past about two months so a year doesn't draw 365 points. */
+      const trend = [];
+      const loc = App.lang === 'ar' ? 'ar' : undefined;
+      if (!range) {
+        for (let i = 6; i >= 0; i--) {
+          const d = new Date(now); d.setDate(d.getDate() - i);
+          const key = UI.dayKey(d.getTime());
+          trend.push({
+            label: d.toLocaleDateString(loc, { weekday: 'short' }),
+            total: sales.filter((s) => UI.dayKey(s.ts) === key).reduce((a, s) => a + s.total, 0),
+          });
+        }
+      } else {
+        const stamps = pSales.map((s) => s.ts);
+        const from = range.from != null ? range.from : (stamps.length ? Math.min(...stamps) : Date.now());
+        const to = range.to != null ? range.to : Date.now();
+        const byMonth = (to - from) / 86400000 > 62;
+        const buckets = {};
+        pSales.forEach((s) => {
+          const k = byMonth ? UI.monthKey(s.ts) : UI.dayKey(s.ts);
+          buckets[k] = (buckets[k] || 0) + s.total;
+        });
+        Object.keys(buckets).sort().slice(-31).forEach((k) => {
+          const d = UI.parseDayKey(byMonth ? k + '-01' : k);
+          trend.push({
+            label: d.toLocaleDateString(loc, byMonth ? { month: 'short' } : { day: 'numeric', month: 'short' }),
+            total: buckets[k],
+          });
+        });
       }
 
-      // this month
-      const inMonth = (t) => new Date(t).getMonth() === now.getMonth() && new Date(t).getFullYear() === now.getFullYear();
-      const mSales = sales.filter((s) => inMonth(s.ts)).reduce((a, s) => a + s.total, 0);
-      const mCost = sales.filter((s) => inMonth(s.ts)).reduce((a, s) => a + (s.cost || 0), 0);
-      const mExpense = expenses.filter((e) => inMonth(e.ts)).reduce((a, e) => a + e.amount, 0);
-
       // top products — category-amount sales (Cat POS) aren't products, so they're left out
-      const q = {}; sales.filter((s) => s.channel !== 'catpos').forEach((s) => s.items.forEach((i) => q[i.name] = (q[i.name] || 0) + i.qty));
+      const q = {}; pSales.filter((s) => s.channel !== 'catpos').forEach((s) => s.items.forEach((i) => q[i.name] = (q[i.name] || 0) + i.qty));
       const topProducts = Object.entries(q).map(([name, qty]) => ({ name, qty })).sort((a, b) => b.qty - a.qty).slice(0, 6);
 
       // cashiers — total nets refunds, but the order count only counts real sales
-      const cby = {}; sales.forEach((s) => { cby[s.cashier] = cby[s.cashier] || { count: 0, total: 0 }; if (isSale(s)) cby[s.cashier].count++; cby[s.cashier].total += s.total; });
+      const cby = {}; pSales.forEach((s) => { cby[s.cashier] = cby[s.cashier] || { count: 0, total: 0 }; if (isSale(s)) cby[s.cashier].count++; cby[s.cashier].total += s.total; });
       const cashiers = Object.entries(cby).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.total - a.total).slice(0, 4);
 
       return {
-        todaySales, todayProfit, todayExpense, todayCount: todays.filter(isSale).length,
-        cashDrawer: (drawer.opening || 0) + cashSales - cashExp,
-        totalOrders: sales.filter(isSale).length, totalRevenue: sales.reduce((a, s) => a + s.total, 0),
-        invValue: products.reduce((a, p) => a + p.cost * p.stock, 0),
-        lowStock: products.filter((p) => p.stock <= (p.minStock || 0)),
-        marginTxt: todaySales ? (todayProfit / todaySales * 100).toFixed(0) + '% <span>margin</span>' : '—',
-        last7, mSales, mCost, mExpense,
-        topProducts, cashiers,
-        recent: [...sales].sort((a, b) => b.ts - a.ts).slice(0, 6)
+        periodSales, periodProfit, periodExpense, periodCost, orders,
+        avgTicket: orders ? periodSales / orders : 0,
+        cashDrawer: (drawer.opening || 0) + cashSales - cashExp,        // today, always
+        invValue: products.reduce((a, p) => a + p.cost * p.stock, 0),   // right now
+        lowStock: products.filter((p) => p.stock <= (p.minStock || 0)), // right now
+        marginTxt: periodSales ? (periodProfit / periodSales * 100).toFixed(0) + '% <span>margin</span>' : '—',
+        trend, topProducts, cashiers,
+        recent: [...pSales].sort((a, b) => b.ts - a.ts).slice(0, 6),
       };
     }
   };

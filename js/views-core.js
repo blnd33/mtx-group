@@ -5,73 +5,89 @@ window.Views = window.Views || {};
 
 /* ------------------------------ DASHBOARD ------------------------------ */
 Views.dashboard = async (root) => {
-  const m = await Store.metrics();
-  const spark = m.last7.map((d) => ({ l: d.label, v: d.total }));
   const stat = (ico, cls, label, value, delta) => `
     <div class="stat"><div class="ico ${cls}">${ico}</div>
       <div class="label">${label}</div><div class="value mono">${value}</div>
       ${delta ? `<div class="delta ${delta.startsWith('-') ? 'text-red' : 'text-green'}">${delta}</div>` : ''}</div>`;
 
   /* A cashier gets their own day and nothing wider: today's takings, today's
-     expenses, the drawer they are counting, and the order count. Every panel
-     below — profit, revenue, valuation, trends, rankings, the recent-sales
-     list — is the shop's books, and stops here. See App.seesShopBooks(). */
+     expenses, the drawer they are counting, and the order count. No date
+     filter either — metrics() with no range means today. Every panel below —
+     profit, valuation, trends, rankings, the recent-sales list — is the shop's
+     books, and stops here. See App.seesShopBooks(). */
   if (!App.seesShopBooks()) {
+    const m = await Store.metrics();
     root.innerHTML = `
       <div class="page-head">
         <div><h1>Today</h1><div class="sub">${UI.fmtDate(Date.now())} · <span>Your shift so far</span></div></div>
         <div class="row">${App.can('pos') ? '<a class="btn primary" href="#/pos">＋ New Sale</a>' : ''}</div>
       </div>
       <div class="stats">
-        ${stat('💵', '', "Today's Sales", UI.money(m.todaySales), '+' + m.todayCount + ' <span>orders</span>')}
-        ${stat('🧾', 'o', 'Expenses (Today)', UI.money(m.todayExpense), null)}
+        ${stat('💵', '', "Today's Sales", UI.money(m.periodSales), '+' + m.orders + ' <span>orders</span>')}
+        ${stat('🧾', 'o', 'Expenses (Today)', UI.money(m.periodExpense), null)}
         ${stat('🪙', 'c', 'Cash in Drawer', UI.money(m.cashDrawer), null)}
-        ${stat('🛒', '', 'Total Orders', UI.num(m.totalOrders), null)}
+        ${stat('🛒', '', 'Total Orders', UI.num(m.orders), null)}
       </div>`;
     return;
   }
+
+  // Opens on today, which is what this page showed before it had a filter.
+  const state = { preset: 'today', ...UI.rangeOf('today') };
 
   root.innerHTML = `
     <div class="page-head">
       <div><h1>Business Overview</h1><div class="sub">${UI.fmtDate(Date.now())} · <span>Live snapshot of your store</span></div></div>
       <div class="row">${App.can('reports') ? '<a class="btn ghost" href="#/reports">View Reports</a>' : ''}${App.can('pos') ? '<a class="btn primary" href="#/pos">＋ New Sale</a>' : ''}</div>
     </div>
+    ${UI.dateFilterHTML(state.preset)}
+    <div id="dashBody"></div>`;
 
+  const body = root.querySelector('#dashBody');
+
+  const render = async () => {
+    const m = await Store.metrics(state);
+    const lbl = UI.rangeLabel(state);
+    const spark = m.trend.map((d) => ({ l: d.label, v: d.total }));
+
+    root.querySelector('#df_summary').innerHTML =
+      `<b>${lbl.name}</b> · ${lbl.span} · ${m.orders} <span>orders</span> · <span>the drawer and stock figures stay current</span>`;
+
+    body.innerHTML = `
     <div class="stats" style="margin-bottom:16px">
-      ${stat('💵', '', "Today's Sales", UI.money(m.todaySales), '+' + m.todayCount + ' <span>orders</span>')}
-      ${stat('📈', 'g', 'Net Profit (Today)', UI.money(m.todayProfit), m.marginTxt)}
-      ${stat('🧾', 'o', 'Expenses (Today)', UI.money(m.todayExpense), null)}
-      ${stat('🪙', 'c', 'Cash in Drawer', UI.money(m.cashDrawer), null)}
+      ${stat('💵', '', 'Sales', UI.money(m.periodSales), '+' + m.orders + ' <span>orders</span>')}
+      ${stat('📈', 'g', 'Net Profit', UI.money(m.periodProfit - m.periodExpense), m.marginTxt)}
+      ${stat('🧾', 'o', 'Expenses', UI.money(m.periodExpense), null)}
+      ${stat('🪙', 'c', 'Cash in Drawer <span class="tiny muted">· today</span>', UI.money(m.cashDrawer), null)}
     </div>
     <div class="stats" style="margin-bottom:22px">
-      ${stat('🛒', '', 'Total Orders', UI.num(m.totalOrders), null)}
-      ${stat('💰', 'g', 'Total Revenue', UI.money(m.totalRevenue), null)}
-      ${stat('📦', 'c', 'Inventory Value', UI.money(m.invValue), null)}
-      ${stat('⚠️', 'r', 'Low-stock Items', UI.num(m.lowStock.length), m.lowStock.length ? 'Needs attention' : 'All good')}
+      ${stat('🛒', '', 'Orders', UI.num(m.orders), null)}
+      ${stat('💰', 'g', 'Avg Ticket', UI.money(m.avgTicket), null)}
+      ${stat('📦', 'c', 'Inventory Value <span class="tiny muted">· now</span>', UI.money(m.invValue), null)}
+      ${stat('⚠️', 'r', 'Low-stock Items <span class="tiny muted">· now</span>', UI.num(m.lowStock.length), m.lowStock.length ? 'Needs attention' : 'All good')}
     </div>
 
     <div class="grid" style="grid-template-columns:1.7fr 1fr">
       <div class="card">
-        <div class="card-head"><h3>Sales — Last 7 days</h3><span class="badge blue">Revenue</span></div>
-        ${UI.lineChart(spark)}
+        <div class="card-head"><h3>Sales Trend</h3><span class="badge blue">${lbl.name}</span></div>
+        ${spark.length ? UI.lineChart(spark) : '<div class="muted center" style="height:180px;display:grid">No sales in this range</div>'}
       </div>
       <div class="card">
-        <div class="card-head"><h3>Profit & Loss</h3><span class="badge green">This month</span></div>
-        <div class="kv"><span class="k">Gross Sales</span><b class="v mono">${UI.money(m.mSales)}</b></div>
-        <div class="kv"><span class="k">Cost of Goods</span><b class="v mono">${UI.money(m.mCost)}</b></div>
-        <div class="kv"><span class="k">Gross Profit</span><b class="v mono text-green">${UI.money(m.mSales - m.mCost)}</b></div>
-        <div class="kv"><span class="k">Expenses</span><b class="v mono text-red">${UI.money(m.mExpense)}</b></div>
-        <div class="kv"><span class="k" style="font-weight:700;color:var(--text)">Net Profit</span><b class="v mono" style="font-size:17px;color:var(--green)">${UI.money(m.mSales - m.mCost - m.mExpense)}</b></div>
+        <div class="card-head"><h3>Profit & Loss</h3><span class="badge green">${lbl.name}</span></div>
+        <div class="kv"><span class="k">Gross Sales</span><b class="v mono">${UI.money(m.periodSales)}</b></div>
+        <div class="kv"><span class="k">Cost of Goods</span><b class="v mono">${UI.money(m.periodCost)}</b></div>
+        <div class="kv"><span class="k">Gross Profit</span><b class="v mono text-green">${UI.money(m.periodSales - m.periodCost)}</b></div>
+        <div class="kv"><span class="k">Expenses</span><b class="v mono text-red">${UI.money(m.periodExpense)}</b></div>
+        <div class="kv"><span class="k" style="font-weight:700;color:var(--text)">Net Profit</span><b class="v mono" style="font-size:17px;color:var(--green)">${UI.money(m.periodSales - m.periodCost - m.periodExpense)}</b></div>
       </div>
     </div>
 
     <div class="grid" style="grid-template-columns:1fr 1fr; margin-top:18px">
       <div class="card">
         <div class="card-head"><h3>Top-selling Products</h3>${App.can('reports') ? '<a class="tiny muted" href="#/reports">Details →</a>' : ''}</div>
-        ${m.topProducts.length ? UI.bars(m.topProducts.map((t) => ({ l: t.name, v: t.qty })), (v) => v + ' <span>pcs</span>') : '<div class="muted">No sales yet</div>'}
+        ${m.topProducts.length ? UI.bars(m.topProducts.map((t) => ({ l: t.name, v: t.qty })), (v) => v + ' <span>pcs</span>') : '<div class="muted">No sales in this range</div>'}
       </div>
       <div class="card">
-        <div class="card-head"><h3>Low-stock Alerts</h3><span class="badge red">${m.lowStock.length}</span></div>
+        <div class="card-head"><h3>Low-stock Alerts <span class="tiny muted" style="font-weight:400">· now</span></h3><span class="badge red">${m.lowStock.length}</span></div>
         ${m.lowStock.length ? m.lowStock.slice(0, 6).map((p) => `
           <div class="list-item"><div class="thumb-sm">${p.icon || '📦'}</div>
             <div class="grow"><b>${UI.esc(p.name)}</b><div class="tiny muted">Min ${p.minStock} · ${p.sku}</div></div>
@@ -84,11 +100,12 @@ Views.dashboard = async (root) => {
       <div class="card pad0">
         <div class="card-head" style="padding:18px 20px 0"><h3>Recent Sales</h3>${App.can('reports') ? '<a class="tiny muted" href="#/reports">All →</a>' : ''}</div>
         <div class="table-wrap"><table class="tbl"><thead><tr><th>Invoice</th><th>Time</th><th>Cashier</th><th>Payment</th><th class="right">Total</th></tr></thead><tbody>
-          ${m.recent.map((s) => `<tr><td><b>#${s.no}</b></td><td class="muted">${UI.fmtDT(s.ts)}</td><td>${UI.esc(s.cashier)}</td><td><span class="badge gray">${s.pay}</span></td><td class="right mono"><b>${UI.money(s.total)}</b></td></tr>`).join('')}
+          ${m.recent.length ? m.recent.map((s) => `<tr><td><b>#${s.no}</b></td><td class="muted">${UI.fmtDT(s.ts)}</td><td>${UI.esc(s.cashier)}</td><td><span class="badge gray">${s.pay}</span></td><td class="right mono"><b>${UI.money(s.total)}</b></td></tr>`).join('')
+            : '<tr><td colspan="5" class="muted" style="padding:24px;text-align:center">No sales in this range</td></tr>'}
         </tbody></table></div>
       </div>
       <div class="card">
-        <div class="card-head"><h3>Best Cashier</h3><span class="badge cyan">Performance</span></div>
+        <div class="card-head"><h3>Best Cashier</h3><span class="badge cyan">${lbl.name}</span></div>
         ${m.cashiers.length ? m.cashiers.map((c, i) => `
           <div class="list-item"><div class="avatar" style="width:36px;height:36px;font-size:13px">${c.name.split(' ').map((x) => x[0]).join('').slice(0, 2)}</div>
             <div class="grow"><b>${UI.esc(c.name)}</b><div class="tiny muted">${c.count} <span>orders</span></div></div>
@@ -96,6 +113,10 @@ Views.dashboard = async (root) => {
         : '<div class="muted">No data</div>'}
       </div>
     </div>`;
+  };
+
+  UI.bindDateFilter(root, state, () => { render(); });
+  await render();
 };
 
 /* ------------------------------ POS CHECKOUT ------------------------------ */

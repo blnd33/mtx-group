@@ -5,10 +5,14 @@
 /* ------------------------------ INVENTORY ------------------------------ */
 Views.inventory = async (root) => {
   const products = await Store.products();
-  const moves = (await DB.all('stockMoves')).sort((a, b) => b.ts - a.ts);
+  const allMoves = (await DB.all('stockMoves')).sort((a, b) => b.ts - a.ts);
   const invValue = products.reduce((s, p) => s + p.cost * p.stock, 0);
   const retailValue = products.reduce((s, p) => s + p.price * p.stock, 0);
   const low = products.filter((p) => p.stock <= (p.minStock || 0));
+
+  /* Stock levels and valuation are what is on the shelf right now, so they sit
+     outside the filter — only the movement history is a record over time. */
+  const state = { preset: 'all', ...UI.rangeOf('all') };
 
   root.innerHTML = `
     <div class="page-head">
@@ -21,22 +25,33 @@ Views.inventory = async (root) => {
       <div class="stat"><div class="ico">🔢</div><div class="label">Total Units</div><div class="value mono">${UI.num(products.reduce((s, p) => s + p.stock, 0))}</div></div>
       <div class="stat"><div class="ico r">⚠️</div><div class="label">Low / Out of Stock</div><div class="value mono">${low.length}</div></div>
     </div>
+    ${UI.dateFilterHTML(state.preset)}
     <div class="grid" style="grid-template-columns:1.5fr 1fr">
       <div class="card pad0">
-        <div class="card-head" style="padding:18px 20px 4px"><h3>Stock Levels</h3><span class="badge blue">${products.length}</span></div>
+        <div class="card-head" style="padding:18px 20px 4px"><h3>Stock Levels <span class="tiny muted" style="font-weight:400">· on the shelf now</span></h3><span class="badge blue">${products.length}</span></div>
         <div class="table-wrap"><table class="tbl"><thead><tr><th>Product</th><th class="right">Stock</th><th class="right">Min</th><th>Status</th><th></th></tr></thead>
         <tbody>${products.map((p) => `<tr><td><b>${UI.esc(p.name)}</b></td><td class="right mono">${p.stock}</td><td class="right mono muted">${p.minStock || 0}</td>
           <td><span class="badge ${p.stock <= 0 ? 'red' : p.stock <= (p.minStock || 0) ? 'orange' : 'green'}">${p.stock <= 0 ? 'Out' : p.stock <= (p.minStock || 0) ? 'Low' : 'OK'}</span></td>
           <td class="row" style="gap:4px"><button class="btn sm ghost" data-in="${p.id}">＋</button><button class="btn sm ghost" data-out="${p.id}">−</button></td></tr>`).join('')}</tbody></table></div>
       </div>
-      <div class="card pad0">
-        <div class="card-head" style="padding:18px 20px 4px"><h3>Movement History</h3></div>
+      <div class="card pad0" id="invMoves"></div>
+    </div>`;
+
+  const movesEl = root.querySelector('#invMoves');
+
+  const render = () => {
+    const moves = allMoves.filter((m) => UI.inRange(state, m.ts));
+    const lbl = UI.rangeLabel(state);
+    root.querySelector('#df_summary').innerHTML =
+      `<b>${lbl.name}</b> · ${lbl.span} · ${moves.length} <span>stock movements</span> · <span>stock levels above are current</span>`;
+
+    movesEl.innerHTML = `
+        <div class="card-head" style="padding:18px 20px 4px"><h3>Movement History</h3><span class="badge blue">${moves.length}</span></div>
         <div class="table-wrap" style="max-height:520px;overflow-y:auto"><table class="tbl"><thead><tr><th>Item</th><th>Type</th><th class="right">Qty</th><th>Date</th></tr></thead>
         <tbody>${moves.length ? moves.slice(0, 40).map((m) => `<tr><td>${UI.esc(m.product)}</td><td><span class="badge ${m.type === 'in' ? 'green' : m.type === 'out' ? 'orange' : 'blue'}">${m.reason}</span></td>
           <td class="right mono ${m.qty > 0 ? 'text-green' : 'text-red'}">${m.qty > 0 ? '+' : ''}${m.qty}</td><td class="tiny muted">${UI.fmtDT(m.ts)}</td></tr>`).join('')
-          : '<tr><td colspan="4" class="muted" style="padding:24px;text-align:center">No movements yet — add stock to begin</td></tr>'}</tbody></table></div>
-      </div>
-    </div>`;
+          : '<tr><td colspan="4" class="muted" style="padding:24px;text-align:center">No movements in this range</td></tr>'}</tbody></table></div>`;
+  };
 
   const move = (id, dir) => stockMoveModal(root, products.find((p) => p.id === id), dir);
   root.querySelectorAll('[data-in]').forEach((b) => b.onclick = () => move(b.dataset.in, 'in'));
@@ -44,6 +59,9 @@ Views.inventory = async (root) => {
   // Opened from the toolbar with nothing chosen — scan or search to pick.
   root.querySelector('#stockIn').onclick = () => stockMoveModal(root, null, 'in');
   root.querySelector('#adjust').onclick = () => stockMoveModal(root, null, 'adjust');
+
+  UI.bindDateFilter(root, state, render);
+  render();
 };
 
 async function stockMoveModal(root, product, dir) {
@@ -550,15 +568,31 @@ function expenseForm(root) {
 /* ------------------------------ CUSTOMERS ------------------------------ */
 Views.customers = async (root) => {
   const custs = await Store.customers();
-  const sales = await Store.sales();
-  const spent = (name) => sales.filter((s) => s.customer === name).reduce((a, s) => a + s.total, 0);
+  const allSales = await Store.sales();
   const totalDebt = custs.reduce((s, c) => s + (c.debt || 0), 0);
+
+  /* The range scopes what each customer SPENT. Debt and points are running
+     balances — what they owe and have earned as of now — so they ignore it. */
+  const state = { preset: 'all', ...UI.rangeOf('all') };
 
   root.innerHTML = `
     <div class="page-head"><div><h1>Customers</h1><div class="sub">${custs.length} <span>customers</span> · ${UI.money(totalDebt)} <span>outstanding debt</span></div></div>
       <button class="btn primary" id="addCust">＋ Add Customer</button></div>
+    ${UI.dateFilterHTML(state.preset)}
+    <div id="custBody"></div>`;
+
+  const body = root.querySelector('#custBody');
+
+  const render = () => {
+    const sales = allSales.filter((s) => UI.inRange(state, s.ts));
+    const spent = (name) => sales.filter((s) => s.customer === name).reduce((a, s) => a + s.total, 0);
+    const lbl = UI.rangeLabel(state);
+    root.querySelector('#df_summary').innerHTML =
+      `<b>${lbl.name}</b> · ${lbl.span} · ${sales.length} <span>invoices</span> · <span>spending below is for this range; debt and points are current</span>`;
+
+    body.innerHTML = `
     <div class="card pad0"><div class="table-wrap"><table class="tbl"><thead><tr>
-      <th>Customer</th><th>Phone</th><th>Address</th><th class="right">Total Spent</th><th class="right">Debt</th><th class="right">Points</th><th></th></tr></thead>
+      <th>Customer</th><th>Phone</th><th>Address</th><th class="right">Spent<div class="tiny muted" style="font-weight:400">${lbl.name}</div></th><th class="right">Debt</th><th class="right">Points</th><th></th></tr></thead>
       <tbody>${custs.map((c) => `<tr><td><div class="row"><div class="thumb-sm">👤</div><b>${UI.esc(c.name)}</b></div></td>
         <td class="mono">${UI.esc(c.phone || '—')}</td><td class="muted tiny">${UI.esc(c.address || '—')}</td>
         <td class="right mono">${UI.money(spent(c.name))}</td>
@@ -566,9 +600,14 @@ Views.customers = async (root) => {
         <td class="right mono">${c.points || 0}</td>
         <td class="row" style="gap:4px">${c.debt ? `<button class="btn sm success" data-pay="${c.id}">Pay</button>` : ''}<button class="btn sm ghost" data-edit="${c.id}">Edit</button></td></tr>`).join('')}</tbody></table></div></div>`;
 
+    // Rebound every render — the table above is replaced each time.
+    body.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => customerForm(root, custs.find((c) => c.id === b.dataset.edit)));
+    body.querySelectorAll('[data-pay]').forEach((b) => b.onclick = () => payDebtModal(root, custs.find((c) => c.id === b.dataset.pay), 'customers'));
+  };
+
   root.querySelector('#addCust').onclick = () => customerForm(root, null);
-  root.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => customerForm(root, custs.find((c) => c.id === b.dataset.edit)));
-  root.querySelectorAll('[data-pay]').forEach((b) => b.onclick = () => payDebtModal(root, custs.find((c) => c.id === b.dataset.pay), 'customers'));
+  UI.bindDateFilter(root, state, render);
+  render();
 };
 
 function customerForm(root, c) {
@@ -611,31 +650,51 @@ function payDebtModal(root, entity, store) {
 Views.suppliers = async (root) => {
   const sups = await Store.suppliers();
   const products = await Store.products();
-  const purchases = (await DB.all('purchases')).sort((a, b) => b.ts - a.ts);
+  const allPurchases = (await DB.all('purchases')).sort((a, b) => b.ts - a.ts);
   const totalDebt = sups.reduce((s, x) => s + (x.debt || 0), 0);
   const canBuy = App.can('inventory'); // buying stock is an inventory action
   const supName = (id) => (sups.find((s) => s.id === id) || {}).name || '—';
   const linkedCount = (id) => products.filter((p) => p.supplier === id).length; // products auto-linked to this supplier
 
+  /* The range scopes the purchase history. "We Owe" is a running balance —
+     what is outstanding today — so the supplier table ignores it. */
+  const state = { preset: 'all', ...UI.rangeOf('all') };
+
   root.innerHTML = `
     <div class="page-head"><div><h1>Suppliers</h1><div class="sub">${sups.length} <span>suppliers</span> · ${UI.money(totalDebt)} <span>payable</span></div></div>
       <div class="row">${canBuy ? '<button class="btn ghost" id="newPO">🧾 New Purchase</button>' : ''}<button class="btn primary" id="addSup">＋ Add Supplier</button></div></div>
+    ${UI.dateFilterHTML(state.preset)}
     <div class="card pad0"><div class="table-wrap"><table class="tbl"><thead><tr>
-      <th>Supplier</th><th>Company</th><th>Phone</th><th>Products</th><th class="right">We Owe</th><th></th></tr></thead>
+      <th>Supplier</th><th>Company</th><th>Phone</th><th>Products</th><th class="right">We Owe<div class="tiny muted" style="font-weight:400">now</div></th><th></th></tr></thead>
       <tbody>${sups.map((s) => `<tr><td><div class="row"><div class="thumb-sm">🏭</div><b>${UI.esc(s.name)}</b></div></td>
         <td class="muted">${UI.esc(s.company || '—')}</td><td class="mono">${UI.esc(s.phone || '—')}</td>
         <td><span class="badge ${linkedCount(s.id) ? 'blue' : 'gray'}">${linkedCount(s.id)} <span>products</span></span></td>
         <td class="right mono">${s.debt ? '<span class="badge red">' + UI.money(s.debt) + '</span>' : '<span class="badge green">Clear</span>'}</td>
         <td class="row" style="gap:4px"><button class="btn sm ghost" data-account="${s.id}">View</button>${canBuy ? `<button class="btn sm ghost" data-buy="${s.id}">Purchase</button>` : ''}${s.debt ? `<button class="btn sm success" data-pay="${s.id}">Pay</button>` : ''}<button class="btn sm ghost" data-edit="${s.id}">Edit</button></td></tr>`).join('')}</tbody></table></div></div>
 
-    <div class="card pad0" style="margin-top:18px"><div class="card-head" style="padding:18px 20px 4px"><h3>Purchase History</h3><span class="badge blue">${purchases.length}</span></div>
+    <div class="card pad0" style="margin-top:18px" id="poHistory"></div>`;
+
+  const poEl = root.querySelector('#poHistory');
+
+  const render = () => {
+    const purchases = allPurchases.filter((p) => UI.inRange(state, p.ts));
+    const lbl = UI.rangeLabel(state);
+    root.querySelector('#df_summary').innerHTML =
+      `<b>${lbl.name}</b> · ${lbl.span} · ${purchases.length} <span>purchases</span> · <span>balances above are current</span>`;
+
+    poEl.innerHTML = `
+      <div class="card-head" style="padding:18px 20px 4px"><h3>Purchase History</h3><span class="badge blue">${purchases.length}</span></div>
       <div class="table-wrap"><table class="tbl"><thead><tr><th>Purchase #</th><th>Date</th><th>Supplier</th><th class="right">Items</th><th>Status</th><th class="right">Total</th><th></th></tr></thead>
       <tbody>${purchases.length ? purchases.slice(0, 40).map((p) => `<tr><td><b>P${p.no}</b></td><td class="muted">${UI.fmtDT(p.ts)}</td><td>${UI.esc(supName(p.supplierId))}</td>
         <td class="right mono">${p.items.reduce((a, i) => a + i.qty, 0)}</td>
         <td>${p.paid ? '<span class="badge green">Paid</span>' : '<span class="badge orange">On account</span>'}</td>
         <td class="right mono"><b>${UI.money(p.total)}</b></td>
         <td><button class="btn sm ghost" data-view="${p.id}">View</button></td></tr>`).join('')
-        : '<tr><td colspan="7" class="muted" style="padding:24px;text-align:center">No purchases yet — record one with “New Purchase”.</td></tr>'}</tbody></table></div></div>`;
+        : '<tr><td colspan="7" class="muted" style="padding:24px;text-align:center">No purchases in this range.</td></tr>'}</tbody></table></div>`;
+
+    // Rebound each render — this table is replaced every time.
+    poEl.querySelectorAll('[data-view]').forEach((b) => b.onclick = () => purchaseView(allPurchases.find((p) => p.id === b.dataset.view), supName));
+  };
 
   root.querySelector('#addSup').onclick = () => supplierForm(root, null);
   const npo = root.querySelector('#newPO'); if (npo) npo.onclick = () => purchaseModal(root, null);
@@ -643,7 +702,9 @@ Views.suppliers = async (root) => {
   root.querySelectorAll('[data-buy]').forEach((b) => b.onclick = () => purchaseModal(root, b.dataset.buy));
   root.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => supplierForm(root, sups.find((s) => s.id === b.dataset.edit)));
   root.querySelectorAll('[data-pay]').forEach((b) => b.onclick = () => payDebtModal(root, sups.find((s) => s.id === b.dataset.pay), 'suppliers'));
-  root.querySelectorAll('[data-view]').forEach((b) => b.onclick = () => purchaseView(purchases.find((p) => p.id === b.dataset.view), supName));
+
+  UI.bindDateFilter(root, state, render);
+  render();
 };
 
 /* Supplier account — a full auto-computed ledger for one supplier:
