@@ -21,7 +21,7 @@ Views.inventory = async (root) => {
     </div>
     <div class="stats" style="margin-bottom:20px">
       <div class="stat"><div class="ico c">📦</div><div class="label">Inventory Value (cost)</div><div class="value mono">${UI.money(invValue)}</div></div>
-      <div class="stat"><div class="ico g">🏷</div><div class="label">Retail Value</div><div class="value mono">${UI.money(retailValue)}</div></div>
+      <div class="stat"><div class="ico g">🏷️</div><div class="label">Retail Value</div><div class="value mono">${UI.money(retailValue)}</div></div>
       <div class="stat"><div class="ico">🔢</div><div class="label">Total Units</div><div class="value mono">${UI.num(products.reduce((s, p) => s + p.stock, 0))}</div></div>
       <div class="stat"><div class="ico r">⚠️</div><div class="label">Low / Out of Stock</div><div class="value mono">${low.length}</div></div>
     </div>
@@ -387,7 +387,7 @@ Views.categories = async (root) => {
       body.innerHTML = `
         <div class="row" style="gap:10px;margin-bottom:14px;align-items:center">
           <button class="btn ghost sm" id="catBack">← All categories</button>
-          <h2 style="margin:0">${b.cat.icon || '🏷'} ${UI.esc(b.cat.name)}</h2>
+          <h2 style="margin:0">${b.cat.icon || '🏷️'} ${UI.esc(b.cat.name)}</h2>
           ${canRename ? `<button class="btn ghost sm" id="catRename">✏️ ${isVirtual ? 'Name this category' : 'Rename'}</button>` : ''}
         </div>
         <div class="stats" style="margin-bottom:16px">
@@ -439,14 +439,14 @@ Views.categories = async (root) => {
     }
 
     body.innerHTML = !list.length
-      ? `<div class="card" style="text-align:center;padding:48px 20px"><div style="font-size:34px">🏷</div>
+      ? `<div class="card" style="text-align:center;padding:48px 20px"><div style="font-size:34px">🏷️</div>
           <h3 style="margin-top:10px">No categories yet</h3>
           <p class="muted tiny" style="margin-top:6px">Add categories from the Products screen.</p></div>`
       : `<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px">
           ${list.map((b) => `
             <div class="card cat-card" data-cat="${b.cat.id}">
               <div class="row between" style="align-items:flex-start">
-                <div><div style="font-size:26px">${b.cat.icon || '🏷'}</div>
+                <div><div style="font-size:26px">${b.cat.icon || '🏷️'}</div>
                   <b style="display:block;margin-top:6px">${UI.esc(b.cat.name)}</b>
                   <div class="tiny muted">${b.prods.length} <span>products</span></div></div>
                 <span class="badge ${b.qty ? 'green' : 'gray'}">${UI.num(b.qty)} <span>sold</span></span>
@@ -492,7 +492,7 @@ Views.expenses = async (root) => {
         <div class="stat"><div class="ico o">🧾</div><div class="label">Total in range</div><div class="value mono">${UI.money(total)}</div></div>
         <div class="stat"><div class="ico">📅</div><div class="label">Records</div><div class="value mono">${exp.length}</div></div>
         <div class="stat"><div class="ico c">🔁</div><div class="label">Recurring</div><div class="value mono">${exp.filter((e) => e.recurring).length}</div></div>
-        <div class="stat"><div class="ico r">🏷</div><div class="label">Categories</div><div class="value mono">${catRows.length}</div></div>
+        <div class="stat"><div class="ico r">🏷️</div><div class="label">Categories</div><div class="value mono">${catRows.length}</div></div>
       </div>
       <div class="grid" style="grid-template-columns:1.5fr 1fr">
         <div class="card pad0"><div class="card-head" style="padding:18px 20px 4px"><h3>Expense Records</h3></div>

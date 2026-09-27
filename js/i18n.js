@@ -30,7 +30,7 @@ const I18N = {
     'Company': 'الشركة', 'Min': 'الحد الأدنى', 'Cost': 'التكلفة', 'Price': 'السعر', 'Stock': 'المخزون',
     'Role': 'الصلاحية', 'Email': 'البريد الإلكتروني', 'Revenue': 'الإيرادات', 'Profit': 'الربح',
     // Buttons (with icons/glyphs as they appear)
-    '＋ Add Product': '＋ إضافة منتج', '🏷 Categories': '🏷 الفئات', '＋ Add Customer': '＋ إضافة عميل',
+    '＋ Add Product': '＋ إضافة منتج', '🏷️ Categories': '🏷️ الفئات', '＋ Add Customer': '＋ إضافة عميل',
     '＋ Add Supplier': '＋ إضافة مورد', '＋ Add User': '＋ إضافة مستخدم', '＋ Add Expense': '＋ إضافة مصروف',
     '🧾 New Purchase': '🧾 شراء جديد', 'New Purchase': 'شراء جديد', 'Purchase': 'شراء', 'Record Purchase': 'تسجيل الشراء',
     // Dashboard

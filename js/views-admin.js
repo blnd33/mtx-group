@@ -449,7 +449,7 @@ Views.discounts = async (root) => {
     </div>
 
     <div class="card" style="max-width:720px;margin-top:18px${activeCats ? ';border-color:var(--primary)' : ''}">
-      <div class="card-head"><h3>🏷 Category discounts</h3>
+      <div class="card-head"><h3>🏷️ Category discounts</h3>
         <span class="badge ${activeCats ? 'green' : 'gray'}">${activeCats ? activeCats + ' running' : 'none set'}</span></div>
       <p class="muted tiny">Put a percentage on a category and <b>every product in it</b> is discounted at checkout.
         A category set here beats the store-wide sale above; leave one blank and it uses the store-wide percentage instead.</p>
@@ -460,7 +460,7 @@ Views.discounts = async (root) => {
           const pct = Number(cd[x.id]) || 0;
           const eff = discountPctFor(x.id, c, cd);
           return `<tr>
-            <td><b>${x.icon || '🏷'} ${UI.esc(x.name)}</b></td>
+            <td><b>${x.icon || '🏷️'} ${UI.esc(x.name)}</b></td>
             <td class="right mono muted">${countIn(x.id)}</td>
             <td class="right"><input class="input mono" data-catpct="${x.id}" type="number" min="0" max="90"
                  value="${pct || ''}" placeholder="—" style="width:86px;text-align:right;padding:6px 8px"></td>

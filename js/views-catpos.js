@@ -87,7 +87,7 @@ Views.catpos = async (root) => {
 
     ${!cats.length ? `
       <div class="card" style="text-align:center;padding:48px 20px;max-width:520px">
-        <div style="font-size:34px">🏷</div>
+        <div style="font-size:34px">🏷️</div>
         <h3 style="margin-top:10px">No categories yet</h3>
         <p class="muted tiny" style="margin-top:6px">Add categories first from <a href="#/products">Products → Categories</a>, then come back here.</p>
       </div>` : `
@@ -133,7 +133,7 @@ Views.catpos = async (root) => {
             <div class="cp-cats" id="cpCats">
               ${cats.map((c) => `
                 <button class="cp-cat ${c.id === CATPAD.cat ? 'active' : ''}" data-cat="${c.id}">
-                  <span class="cp-cat-ico">${c.icon || '🏷'}</span>
+                  <span class="cp-cat-ico">${c.icon || '🏷️'}</span>
                   <span class="cp-cat-name">${UI.esc(c.name)}</span>
                   <span class="cp-cat-sold mono" title="Sold via Cat POS (all time)">${UI.money(soldByCat[c.id] || 0)}</span>
                 </button>`).join('')}

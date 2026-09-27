@@ -13,7 +13,20 @@ const Store = (() => {
   return {
     bust() { cache = {}; },
     products: () => get('products'),
-    categories: () => get('categories'),
+    /* Categories saved before Sep 2026 hold a bare 🏷 (U+1F3F7). That codepoint
+       defaults to *text* presentation, so without U+FE0F after it Windows draws
+       a hollow outline box instead of a tag. Repaired on the way out rather than
+       by rewriting rows: no migration to get wrong, and no sync traffic. */
+    async categories() {
+      const rows = await get('categories');
+      const BARE = /\u{1F3F7}(?!\uFE0F)/gu;
+      rows.forEach((c) => {
+        if (typeof c.icon === 'string' && c.icon.includes('\u{1F3F7}')) {
+          c.icon = c.icon.replace(BARE, '\u{1F3F7}\uFE0F');
+        }
+      });
+      return rows;
+    },
     sales: () => get('sales'),
     customers: () => get('customers'),
     suppliers: () => get('suppliers'),
@@ -117,7 +130,7 @@ const NAV = [
   { id: 'catpos', label: 'Cat POS', icon: '🧮' },
   { group: 'Catalog' },
   { id: 'products', label: 'Products', icon: '📦' },
-  { id: 'categories', label: 'Categories', icon: '🏷' },
+  { id: 'categories', label: 'Categories', icon: '🏷️' },
   { id: 'inventory', label: 'Inventory', icon: '🗃️' },
   { id: 'barcode', label: 'Barcode', icon: '🏷️' },
   { group: 'Finance' },

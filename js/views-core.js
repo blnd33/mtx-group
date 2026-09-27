@@ -1014,7 +1014,7 @@ Views.products = async (root) => {
   root.innerHTML = `
     <div class="page-head">
       <div><h1>Products</h1><div class="sub">${products.length} <span>products</span> · ${cats.length} <span>categories</span>${canEdit ? '' : ' · <span class="badge gray">View only</span>'}</div></div>
-      ${canEdit ? '<div class="row"><button class="btn ghost" id="expP">⇩ Download Excel</button><button class="btn ghost" id="impP">⇪ Import from Excel</button><button class="btn ghost" id="mgCats">🏷 Categories</button><button class="btn primary" id="addP">＋ Add Product</button></div>' : ''}
+      ${canEdit ? '<div class="row"><button class="btn ghost" id="expP">⇩ Download Excel</button><button class="btn ghost" id="impP">⇪ Import from Excel</button><button class="btn ghost" id="mgCats">🏷️ Categories</button><button class="btn primary" id="addP">＋ Add Product</button></div>' : ''}
     </div>
     <div class="card pad0">
       <div class="row between" style="padding:16px 18px">
@@ -1279,7 +1279,7 @@ async function applyImport(root, rows) {
     let catId = '';
     if (r.category) {
       const key = r.category.toLowerCase();
-      if (!catByName[key]) { const c = { id: UI.uid('c'), name: r.category, icon: '🏷' }; await DB.put('categories', c); catByName[key] = c; madeCats++; }
+      if (!catByName[key]) { const c = { id: UI.uid('c'), name: r.category, icon: '🏷️' }; await DB.put('categories', c); catByName[key] = c; madeCats++; }
       catId = catByName[key].id;
     }
     // supplier (auto-create)
@@ -1416,12 +1416,12 @@ async function categoryModal(root) {
   const invValue = (c) => products.filter((p) => p.category === c.id).reduce((s, p) => s + (p.cost || 0) * (p.stock || 0), 0);
   UI.modal({
     title: 'Categories',
-    body: `<div class="row" style="margin-bottom:14px"><input class="input" id="newCat" placeholder="New category name"><input class="input" id="newCatIcon" placeholder="🏷" style="max-width:70px"><button class="btn primary" id="addCat">Add</button></div>
-      <div id="catList">${cats.map((c) => `<div class="list-item"><div class="thumb-sm">${c.icon || '🏷'}</div><b class="grow">${UI.esc(c.name)}</b><span class="tiny muted mono" style="margin-right:10px">${UI.money(invValue(c))} <span>inventory</span></span><button class="btn sm ghost" data-editcat="${c.id}">Rename</button><button class="btn sm ghost" data-delcat="${c.id}">Remove</button></div>`).join('')}</div>`
+    body: `<div class="row" style="margin-bottom:14px"><input class="input" id="newCat" placeholder="New category name"><input class="input" id="newCatIcon" placeholder="🏷️" style="max-width:70px"><button class="btn primary" id="addCat">Add</button></div>
+      <div id="catList">${cats.map((c) => `<div class="list-item"><div class="thumb-sm">${c.icon || '🏷️'}</div><b class="grow">${UI.esc(c.name)}</b><span class="tiny muted mono" style="margin-right:10px">${UI.money(invValue(c))} <span>inventory</span></span><button class="btn sm ghost" data-editcat="${c.id}">Rename</button><button class="btn sm ghost" data-delcat="${c.id}">Remove</button></div>`).join('')}</div>`
   });
   document.getElementById('addCat').onclick = async () => {
     const n = document.getElementById('newCat').value.trim(); if (!n) return;
-    await DB.put('categories', { id: UI.uid('c'), name: n, icon: document.getElementById('newCatIcon').value || '🏷' });
+    await DB.put('categories', { id: UI.uid('c'), name: n, icon: document.getElementById('newCatIcon').value || '🏷️' });
     Store.bust(); UI.toast('Category added'); categoryModal(root);
   };
   document.querySelectorAll('[data-delcat]').forEach((b) => b.onclick = async () => { await DB.del('categories', b.dataset.delcat); Store.bust(); categoryModal(root); });

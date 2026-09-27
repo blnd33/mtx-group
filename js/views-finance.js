@@ -295,7 +295,7 @@ Views.reports = async (root) => {
         return `
         <div class="stats" style="margin-bottom:16px">
           <div class="stat"><div class="ico r">🏷️</div><div class="label">Discount Given</div><div class="value mono ${gDisc ? 'text-red' : ''}">${UI.money(gDisc)}</div>${gGross ? `<div class="delta text-red">${(gDisc / gGross * 100).toFixed(1)}% of gross</div>` : ''}</div>
-          <div class="stat"><div class="ico">🏷</div><div class="label">Before Discount</div><div class="value mono">${UI.money(gGross)}</div></div>
+          <div class="stat"><div class="ico">🏷️</div><div class="label">Before Discount</div><div class="value mono">${UI.money(gGross)}</div></div>
           <div class="stat"><div class="ico g">💰</div><div class="label">Actually Sold For</div><div class="value mono">${UI.money(gNet)}</div></div>
           <div class="stat"><div class="ico c">📦</div><div class="label">Categories Sold</div><div class="value mono">${UI.num(list.length)}</div></div>
         </div>
@@ -481,7 +481,7 @@ Views.invoices = async (root) => {
         : `<span class="badge gray">${s.pay}</span>`;
       const prefix = s.type === 'exchange' ? 'X' : s.type === 'refund' ? 'R' : '#';
       const itemDisc = (s.items || []).some((i) => i.discAmt);
-      const discBadge = (itemDisc || s.discount) ? '<span class="badge blue" title="Discount applied">🏷 Disc</span>' : '';
+      const discBadge = (itemDisc || s.discount) ? '<span class="badge blue" title="Discount applied">🏷️ Disc</span>' : '';
       return `<tr><td><b>${prefix}${s.no}</b>${s.refundOf ? `<div class="tiny muted">vs #${s.refundOf}</div>` : ''}</td>
         <td class="muted">${UI.fmtDT(s.ts)}</td><td>${UI.esc(s.cashier)}</td><td>${UI.esc(s.customer)}</td>
         <td class="mono">${Math.abs(s.items.reduce((a, i) => a + i.qty, 0))}</td>

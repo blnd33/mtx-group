@@ -27,7 +27,7 @@ const STORES = [
       title: ['Every shade, bottle and brush —', 'counted, priced and sold.'],
       points: [
         ['🧴', 'Skincare, makeup and fragrance in one catalogue'],
-        ['🏷', 'Barcode checkout built for a busy counter'],
+        ['🏷️', 'Barcode checkout built for a busy counter'],
         ['💗', 'Customer accounts, loyalty points and balances'],
         ['📈', 'Daily takings, profit and low-stock alerts']
       ]
@@ -63,7 +63,7 @@ const STORES = [
       title: ['Chandeliers, stemware and gifts —', 'every piece accounted for.'],
       points: [
         ['💎', 'Chandeliers, glassware and giftware in one catalogue'],
-        ['🏷', 'Retail and wholesale prices on the same product'],
+        ['🏷️', 'Retail and wholesale prices on the same product'],
         ['🧾', 'Accounts for showroom buyers and trade customers'],
         ['📈', 'Daily takings, profit and low-stock alerts']
       ]
