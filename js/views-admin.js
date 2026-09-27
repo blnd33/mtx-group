@@ -411,11 +411,16 @@ function fmtIn(v, c) {
 Views.discounts = async (root) => {
   const c = (await DB.setting('campaign')) || { active: false, pct: 0, label: '', from: null, to: null };
   const products = await Store.products();
+  const cats = await Store.categories();
+  const cd = (await DB.setting('catDiscounts')) || {};   // { categoryId: percent }
   const live = campaignLive(c);
   const dayKey = (ts) => (ts ? UI.dayKey(ts) : '');
+  const catName = (id) => (cats.find((x) => x.id === id) || {}).name || '—';
+  const countIn = (id) => products.filter((p) => p.category === id).length;
+  const activeCats = cats.filter((x) => (Number(cd[x.id]) || 0) > 0).length;
 
   root.innerHTML = `
-    <div class="page-head"><div><h1>Store Discount</h1><div class="sub">Run a store-wide sale — a percentage off every product</div></div></div>
+    <div class="page-head"><div><h1>Store Discount</h1><div class="sub">Run a sale — across the whole shop, or a percentage per category</div></div></div>
 
     <div class="card" style="max-width:720px;${live ? 'border-color:var(--green)' : ''}">
       <div class="row between" style="align-items:flex-start">
@@ -443,6 +448,32 @@ Views.discounts = async (root) => {
       </div>
     </div>
 
+    <div class="card" style="max-width:720px;margin-top:18px${activeCats ? ';border-color:var(--primary)' : ''}">
+      <div class="card-head"><h3>🏷 Category discounts</h3>
+        <span class="badge ${activeCats ? 'green' : 'gray'}">${activeCats ? activeCats + ' running' : 'none set'}</span></div>
+      <p class="muted tiny">Put a percentage on a category and <b>every product in it</b> is discounted at checkout.
+        A category set here beats the store-wide sale above; leave one blank and it uses the store-wide percentage instead.</p>
+      ${!cats.length ? '<div class="muted tiny" style="padding:18px 0">No categories yet — add some from <a href="#/products">Products → Categories</a>.</div>' : `
+      <div class="table-wrap" style="margin-top:12px"><table class="tbl">
+        <thead><tr><th>Category</th><th class="right">Products</th><th class="right">Discount %</th><th class="right">Rings up at</th></tr></thead>
+        <tbody>${cats.map((x) => {
+          const pct = Number(cd[x.id]) || 0;
+          const eff = discountPctFor(x.id, c, cd);
+          return `<tr>
+            <td><b>${x.icon || '🏷'} ${UI.esc(x.name)}</b></td>
+            <td class="right mono muted">${countIn(x.id)}</td>
+            <td class="right"><input class="input mono" data-catpct="${x.id}" type="number" min="0" max="90"
+                 value="${pct || ''}" placeholder="—" style="width:86px;text-align:right;padding:6px 8px"></td>
+            <td class="right">${eff.pct
+              ? `<span class="badge ${eff.src === 'category' ? 'green' : 'gray'}">−${eff.pct}% ${eff.src === 'category' ? 'category' : 'store-wide'}</span>`
+              : '<span class="muted tiny">full price</span>'}</td></tr>`;
+        }).join('')}</tbody></table></div>
+      <div class="row" style="gap:10px;margin-top:14px">
+        <button class="btn primary" id="cat_save">Save category discounts</button>
+        <button class="btn ghost" id="cat_clear">Clear all</button>
+      </div>`}
+    </div>
+
     <div class="card" style="max-width:720px;margin-top:18px">
       <div class="card-head"><h3>Preview</h3><span class="badge ${live ? 'green' : 'gray'}">${live ? c.pct + '% off' : 'not running'}</span></div>
       <p class="muted tiny">How the first few products will ring up while the sale is on.</p>
@@ -451,18 +482,35 @@ Views.discounts = async (root) => {
         <tbody id="cmp_prev"></tbody></table></div>
     </div>`;
 
+  /* Whatever is typed into the category boxes right now — blank means none. */
+  const readCatPcts = () => {
+    const out = {};
+    root.querySelectorAll('[data-catpct]').forEach((el) => {
+      const v = Math.min(90, Math.max(0, +el.value || 0));
+      if (v > 0) out[el.dataset.catpct] = v;
+    });
+    return out;
+  };
+
   const drawPreview = () => {
-    const pct = Math.min(90, Math.max(0, +root.querySelector('#cmp_pct').value || 0));
+    const storePct = Math.min(90, Math.max(0, +root.querySelector('#cmp_pct').value || 0));
+    // Preview what the form says, not what was last saved, so you can see the
+    // effect of a change before committing to it.
+    const draft = storePct ? { ...c, active: true, pct: storePct, from: null, to: null } : null;
+    const pcts = readCatPcts();
     root.querySelector('#cmp_prev').innerHTML = products.slice(0, 8).map((p) => {
-      const off = p.price * (pct / 100);
-      return `<tr><td><b>${UI.esc(p.name)}</b></td>
+      const eff = discountPctFor(p.category, draft, pcts);
+      const off = p.price * (eff.pct / 100);
+      return `<tr><td><b>${UI.esc(p.name)}</b>${eff.src === 'category'
+          ? ` <span class="badge green">${UI.esc(catName(p.category))} −${eff.pct}%</span>` : ''}</td>
         <td class="right mono">${UI.money(p.price)}</td>
-        <td class="right mono text-green"><b>${UI.money(p.price - off)}</b></td>
-        <td class="right mono text-red">− ${UI.money(off)}</td></tr>`;
+        <td class="right mono ${off ? 'text-green' : 'muted'}"><b>${UI.money(p.price - off)}</b></td>
+        <td class="right mono ${off ? 'text-red' : 'muted'}">${off ? '− ' + UI.money(off) : '—'}</td></tr>`;
     }).join('') || '<tr><td colspan="4" class="muted">No products yet</td></tr>';
   };
   drawPreview();
   root.querySelector('#cmp_pct').oninput = drawPreview;
+  root.querySelectorAll('[data-catpct]').forEach((el) => { el.oninput = drawPreview; });
 
   const readForm = () => {
     const from = root.querySelector('#cmp_from').value;
@@ -487,6 +535,22 @@ Views.discounts = async (root) => {
     await DB.setting('campaign', { ...c, active: false });
     UI.toast('Sale stopped', 'info'); Views.discounts(root);
   };
+
+  const catSave = root.querySelector('#cat_save');
+  if (catSave) catSave.onclick = async () => {
+    const next = readCatPcts();
+    await DB.setting('catDiscounts', next);
+    const n = Object.keys(next).length;
+    UI.toast(n ? `${n} category discount${n === 1 ? '' : 's'} saved` : 'Category discounts cleared');
+    Views.discounts(root);
+  };
+
+  const catClear = root.querySelector('#cat_clear');
+  if (catClear) catClear.onclick = () => UI.confirm('Remove the discount from every category?', async () => {
+    await DB.setting('catDiscounts', {});
+    UI.toast('Category discounts cleared', 'info');
+    Views.discounts(root);
+  });
 };
 
 /* Is a campaign actually in force right now (enabled, has a %, within dates)? */
@@ -498,6 +562,22 @@ function campaignLive(c) {
   return true;
 }
 window.campaignLive = campaignLive;
+
+/* What comes off a product right now, and where it came from.
+
+   A category with its own percentage wins for everything in it; a category
+   with nothing set falls back to the store-wide sale. So "20% off Glassware,
+   10% off everything else" is two settings, not a rule engine.
+
+   `src` is carried onto the sale line so Reports can say which discount did
+   the discounting rather than just showing a total. */
+function discountPctFor(catId, campaign, catDiscounts) {
+  const catPct = Math.min(90, Math.max(0, Number((catDiscounts || {})[catId]) || 0));
+  if (catPct > 0) return { pct: catPct, src: 'category' };
+  const storePct = campaignLive(campaign) ? Math.min(90, Math.max(0, Number(campaign.pct) || 0)) : 0;
+  return storePct > 0 ? { pct: storePct, src: 'store' } : { pct: 0, src: null };
+}
+window.discountPctFor = discountPctFor;
 
 /* ------------------------------ BACKUP ------------------------------ */
 Views.backup = async (root) => {

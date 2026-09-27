@@ -135,6 +135,14 @@ Views.finance = async (root) => {
 Views.reports = async (root) => {
   const allSales = await Store.sales();
   const allExpenses = await DB.all('expenses');
+  const allCats = await Store.categories();
+  const allProducts = await Store.products();
+
+  /* Sales rung up before category discounts existed carry no `cat` on their
+     lines, so fall back to where the product sits today. Cat POS lines use
+     `catId` — they are category sales by nature. */
+  const prodCat = {}; allProducts.forEach((p) => { prodCat[p.id] = p.category || null; });
+  const catNameOf = (id) => (allCats.find((c) => c.id === id) || {}).name || 'Uncategorised';
 
   const store = await DB.setting('store');
   /* A cashier reports on their own day: the range is fixed to today, and the
@@ -145,7 +153,7 @@ Views.reports = async (root) => {
   let tab = 'sales';
 
   const TABS = books
-    ? [['sales', 'Sales'], ['products', 'Products'], ['catpos', 'Cat POS'], ['staff', 'Cashiers'], ['profit', 'Profit & Expenses']]
+    ? [['sales', 'Sales'], ['products', 'Products'], ['catpos', 'Cat POS'], ['discounts', 'Discounts'], ['staff', 'Cashiers'], ['profit', 'Profit & Expenses']]
     : [['sales', 'Sales'], ['products', 'Products'], ['catpos', 'Cat POS']];
 
   root.innerHTML = `
@@ -251,6 +259,67 @@ Views.reports = async (root) => {
         <tbody>${top.map((t) => `<tr><td><b>${UI.esc(t.name)}</b></td><td class="right mono">${t.qty}</td><td class="right mono">${UI.money(t.rev)}</td><td class="right mono ${t.disc ? 'text-red' : 'muted'}">${t.disc ? '− ' + UI.money(t.disc) : '—'}</td></tr>`).join('')}</tbody></table></div></div>`,
 
       catpos: () => window.catposReportPanel(sales),
+
+      /* Where the money that came off actually went. Grouped by the category
+         on each sale line, so a category-wide sale reads as one number instead
+         of being scattered across a per-product list. */
+      discounts: () => {
+        const rows = {};
+        let gGross = 0, gDisc = 0, gNet = 0, gLines = 0;
+        sales.filter(isSale).forEach((s) => (s.items || []).forEach((i) => {
+          const catId = i.cat || i.catId || prodCat[i.id] || null;
+          const key = catId || '_none';
+          const r = rows[key] || (rows[key] = { name: catId ? catNameOf(catId) : 'Uncategorised', gross: 0, disc: 0, net: 0, lines: 0, srcs: {} });
+          const gross = (Number(i.price) || 0) * (Number(i.qty) || 0);
+          const d = Number(i.discAmt) || 0;
+          const net = i.net != null ? Number(i.net) : gross - d;
+          r.gross += gross; r.disc += d; r.net += net; r.lines++;
+          if (d > 0) {
+            // `src` is set by the till; older or hand-typed discounts have none.
+            const src = (i.disc && i.disc.src) || (i.disc ? 'manual' : 'invoice');
+            r.srcs[src] = (r.srcs[src] || 0) + d;
+          }
+          gGross += gross; gDisc += d; gNet += net; gLines++;
+        }));
+        const list = Object.values(rows).sort((a, b) => b.disc - a.disc || b.gross - a.gross);
+        if (!list.length) return empty('sales');
+
+        const LABEL = { category: 'Category', store: 'Store-wide', manual: 'Manual', invoice: 'Whole invoice' };
+        const srcBadges = (srcs) => {
+          const keys = Object.keys(srcs).sort((a, b) => srcs[b] - srcs[a]);
+          return keys.length
+            ? keys.map((k) => `<span class="badge ${k === 'category' ? 'green' : k === 'store' ? 'blue' : 'gray'}">${LABEL[k] || k}</span>`).join(' ')
+            : '<span class="muted tiny">—</span>';
+        };
+
+        return `
+        <div class="stats" style="margin-bottom:16px">
+          <div class="stat"><div class="ico r">🏷️</div><div class="label">Discount Given</div><div class="value mono ${gDisc ? 'text-red' : ''}">${UI.money(gDisc)}</div>${gGross ? `<div class="delta text-red">${(gDisc / gGross * 100).toFixed(1)}% of gross</div>` : ''}</div>
+          <div class="stat"><div class="ico">🏷</div><div class="label">Before Discount</div><div class="value mono">${UI.money(gGross)}</div></div>
+          <div class="stat"><div class="ico g">💰</div><div class="label">Actually Sold For</div><div class="value mono">${UI.money(gNet)}</div></div>
+          <div class="stat"><div class="ico c">📦</div><div class="label">Categories Sold</div><div class="value mono">${UI.num(list.length)}</div></div>
+        </div>
+        <div class="card"><div class="card-head"><h3>Discount by Category</h3><span class="badge red">${UI.money(gDisc)} total</span></div>
+          ${gDisc ? UI.bars(list.filter((r) => r.disc > 0).map((r) => ({ l: r.name, v: r.disc })))
+                  : '<div class="muted tiny">Nothing was discounted in this range — everything sold at full price.</div>'}</div>
+        <div class="card pad0" style="margin-top:16px">
+          <div class="card-head" style="padding:18px 20px 4px"><h3>Category Discount Report</h3><span class="badge blue">${list.length} categories</span></div>
+          <div class="table-wrap"><table class="tbl"><thead><tr><th>Category</th><th class="right">Lines</th><th class="right">Before</th><th class="right">Discount</th><th class="right">Sold For</th><th>From</th></tr></thead>
+          <tbody>
+            ${list.map((r) => `<tr><td><b>${UI.esc(r.name)}</b></td>
+              <td class="right mono muted">${r.lines}</td>
+              <td class="right mono">${UI.money(r.gross)}</td>
+              <td class="right mono ${r.disc ? 'text-red' : 'muted'}">${r.disc ? '− ' + UI.money(r.disc) : '—'}${r.disc && r.gross ? `<div class="tiny muted">${(r.disc / r.gross * 100).toFixed(1)}%</div>` : ''}</td>
+              <td class="right mono"><b>${UI.money(r.net)}</b></td>
+              <td>${srcBadges(r.srcs)}</td></tr>`).join('')}
+            <tr style="border-top:2px solid var(--border)"><td><b>Total</b></td>
+              <td class="right mono">${gLines}</td>
+              <td class="right mono">${UI.money(gGross)}</td>
+              <td class="right mono ${gDisc ? 'text-red' : 'muted'}"><b>${gDisc ? '− ' + UI.money(gDisc) : '—'}</b></td>
+              <td class="right mono"><b>${UI.money(gNet)}</b></td><td></td></tr>
+          </tbody></table></div>
+        </div>`;
+      },
 
       staff: () => !sales.length ? empty('cashier activity') : `
         <div class="card pad0"><div class="card-head" style="padding:18px 20px 4px"><h3>Cashier Performance</h3></div>

@@ -128,15 +128,23 @@ Views.pos = async (root) => {
   const cats = await Store.categories();
   let activeCat = 'all', query = '';
 
-  // Store-wide sale set by the Super Admin — applied to every line automatically.
+  /* Discounts the Super Admin set, applied automatically at the till. A
+     category with its own percentage beats the store-wide sale — the rule
+     lives in discountPctFor() so the till, the preview and the reports all
+     agree on what comes off. */
   const camp = (await DB.setting('campaign')) || null;
+  const catDisc = (await DB.setting('catDiscounts')) || {};
   CART.campaign = campaignLive(camp) ? { pct: camp.pct, label: camp.label || 'Store discount' } : null;
   const cPct = CART.campaign ? CART.campaign.pct : 0;
+  const nCatDisc = Object.keys(catDisc).filter((k) => (Number(catDisc[k]) || 0) > 0).length;
+  const offFor = (p) => discountPctFor(p.category, camp, catDisc);
 
   root.innerHTML = `
     <div class="pos">
       <div class="pos-left">
-        ${CART.campaign ? `<div class="campaign-bar">🎉 <b>${UI.esc(CART.campaign.label)}</b> — ${cPct}% off every product</div>` : ''}
+        ${CART.campaign || nCatDisc ? `<div class="campaign-bar">🎉 ${CART.campaign
+          ? `<b>${UI.esc(CART.campaign.label)}</b> — ${cPct}% off${nCatDisc ? `, and ${nCatDisc} categor${nCatDisc === 1 ? 'y has its own' : 'ies have their own'}` : ' every product'}`
+          : `<b>Category sale</b> — ${nCatDisc} categor${nCatDisc === 1 ? 'y is' : 'ies are'} discounted`}</div>` : ''}
         <div class="row between" style="margin-bottom:12px">
           <div class="topbar-like search" style="flex:1;display:flex;gap:8px;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:10px 16px">
             <span>🔎</span><input id="posSearch" placeholder="Search product or scan barcode…" style="border:none;background:transparent;outline:none;width:100%"/>
@@ -158,13 +166,14 @@ Views.pos = async (root) => {
       (activeCat === 'all' || p.category === activeCat) &&
       (!query || p.name.toLowerCase().includes(query) || (p.barcode || '').includes(query) || (p.sku || '').toLowerCase().includes(query)));
     grid.innerHTML = list.length ? list.map((p) => {
-      const sale = cPct ? p.price * (1 - cPct / 100) : 0;
+      const eff = offFor(p);
+      const sale = eff.pct ? p.price * (1 - eff.pct / 100) : 0;
       return `
       <div class="prod-card" data-add="${p.id}">
         <div class="thumb">${p.icon || '📦'}</div>
         <div class="name">${UI.esc(p.name)}</div>
         <div class="row between">${sale
-          ? `<span class="price mono"><s class="tiny muted">${UI.money(p.price)}</s> ${UI.money(sale)}</span><span class="disc-tag">−${cPct}%</span>`
+          ? `<span class="price mono"><s class="tiny muted">${UI.money(p.price)}</s> ${UI.money(sale)}</span><span class="disc-tag">−${eff.pct}%</span>`
           : `<span class="price mono">${UI.money(p.price)}</span>`}</div>
         <div class="stk">${p.stock <= 0 ? '<span class="text-red">Out of stock</span>' : p.stock + ' <span>in stock</span>'}</div>
       </div>`;
@@ -224,10 +233,13 @@ Views.pos = async (root) => {
     // floors stock at 0, so anything oversold would disappear silently.
     if (ex) { if (cartAddOk(ex, p.name)) ex.qty++; }
     else {
-      const line = { id: p.id, name: p.name, price: p.price, cost: p.cost, qty: 1, min: p.wholesale, stock: p.stock };
-      // A running store sale discounts the line automatically; the cashier can
-      // still override it by typing their own discount on the row.
-      if (cPct) line.disc = { type: 'percent', val: cPct, auto: true };
+      const eff = offFor(p);
+      const line = { id: p.id, name: p.name, price: p.price, cost: p.cost, qty: 1, min: p.wholesale, stock: p.stock, cat: p.category || null };
+      /* A running sale discounts the line automatically; the cashier can still
+         override it by typing their own discount on the row. `src` records
+         whether it came from the category or the store-wide campaign, so the
+         reports can say which discount did the discounting. */
+      if (eff.pct) line.disc = { type: 'percent', val: eff.pct, auto: true, src: eff.src };
       CART.items.push(line);
     }
     drawCart(root);
@@ -516,6 +528,9 @@ async function completeSale(root, pay) {
       const orderShare = shares[idx] || 0;
       const discAmt = itemDisc + orderShare;
       return { id: i.id, name: i.name, price: i.price, qty: i.qty, cost: i.cost,
+        // Snapshot the category so reports can group by it even if the product
+        // is later moved to a different one.
+        cat: i.cat || null,
         disc: (i.disc && i.disc.val && itemDisc) ? { ...i.disc } : null,
         itemDisc, orderShare, discAmt, net: i.price * i.qty - discAmt };
     }),
