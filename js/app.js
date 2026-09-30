@@ -889,6 +889,11 @@ const App = {
       window.__deferredPrompt = null;
       btn.classList.add('hide');
       if (outcome !== 'accepted') UI.toast('Install cancelled', 'info');
+      // The installed window still shows the print dialog; silent receipts
+      // need the till shortcut from Settings → Receipt & Invoice.
+      else if (/Windows/i.test(navigator.userAgent) && this.can('settings')) {
+        UI.toast('Installed. For receipts without a print window, see Settings → Receipt & Invoice', 'info');
+      }
     };
   }
 };

@@ -104,6 +104,42 @@ function userForm(root, u) {
 }
 
 /* ------------------------------ SETTINGS ------------------------------ */
+/* Silent receipt printing needs Chrome/Edge started with --kiosk-printing;
+   a page cannot switch it on for itself. kiosk/MTX-POS-Setup.bat makes a
+   desktop shortcut that starts the till that way. It is saved under a
+   browser-specific name because, run with no arguments, the setup picks
+   Edge or Chrome from its own filename. */
+function tillSetupCard() {
+  const ua = navigator.userAgent || '';
+  const uad = navigator.userAgentData;
+  const windows = uad && uad.platform ? uad.platform === 'Windows' : /Windows/i.test(ua);
+  const brands = ((uad && uad.brands) || []).map((b) => b.brand).join(' ');
+  const edge = /Edge/i.test(brands) || /Edg\//.test(ua);
+  const link = (name, label, cls) =>
+    `<a class="btn ${cls}" href="kiosk/MTX-POS-Setup.bat" download="MTX-POS-Setup-${name}.bat">${label}</a>`;
+  const buttons = edge
+    ? link('Edge', '⇩ Download setup for Edge', 'primary') + link('Chrome', 'For Chrome instead', 'ghost')
+    : link('Chrome', '⇩ Download setup for Chrome', 'primary') + link('Edge', 'For Edge instead', 'ghost');
+  return `<div class="card" style="max-width:640px;margin-top:18px">
+      <div class="card-head"><h3>🖨️ Silent receipt printing</h3><span class="badge gray">Windows tills</span></div>
+      <p class="muted tiny">Receipts can go straight to the printer with no print window. A website isn't allowed to
+        switch that on by itself — Chrome and Edge only allow it when they are opened a special way. This one-time
+        setup puts an <b>MTX POS</b> icon on the desktop that opens the till that way.</p>
+      ${windows ? `
+      <ol class="tiny" style="line-height:1.8;padding-inline-start:18px;margin:12px 0">
+        <li>Make the receipt printer the <b>default printer</b> in Windows — receipts go to whichever printer is default.</li>
+        <li>Download the setup and open it. The browser and Windows will warn about the file:
+          choose <b>Keep</b>, then <b>More info → Run anyway</b>.</li>
+        <li>From then on, open the till with the <b>MTX POS</b> icon, and sign in once there.</li>
+      </ol>
+      <div class="row wrap" style="gap:10px">${buttons}</div>
+      <p class="tiny muted" style="margin-top:12px">Installed the suite with the browser's <b>Install app</b>? That window
+        still shows the print dialog — use the MTX POS icon for the till instead. To undo, just delete the icon.</p>`
+      : `<p class="tiny muted" style="margin-top:10px">This setup is for Windows computers. Open this page on the
+        till PC to download it. On this device receipts print through the normal print window.</p>`}
+    </div>`;
+}
+
 Views.settings = async (root, initialTab = 'store') => {
   const store = await DB.setting('store') || {};
   const theme = document.documentElement.getAttribute('data-theme') || 'light';
@@ -158,7 +194,8 @@ Views.settings = async (root, initialTab = 'store') => {
         <div class="field"><label class="row" style="gap:8px"><input type="checkbox" checked> Show barcode/QR</label></div>
         <div class="field"><label>Default printer</label><select class="select"><option>Thermal 80mm</option><option>Thermal 58mm</option><option>A4 (Laser/Inkjet)</option></select></div>
         <div class="field"><label>Copies</label><input class="input mono" type="number" value="1"></div></div>
-        <button class="btn primary" id="rc_save">Save Receipt Settings</button></div>`,
+        <button class="btn primary" id="rc_save">Save Receipt Settings</button></div>
+      ${tillSetupCard()}`,
     app: () => `<div class="card" style="max-width:640px"><div class="section-title">Theme</div>
         <div class="role-pick"><div class="role-btn ${theme === 'light' ? 'active' : ''}" data-theme="light">☀️ Light</div><div class="role-btn ${theme === 'dark' ? 'active' : ''}" data-theme="dark">🌙 Dark</div></div>
         <div class="section-title" style="margin-top:18px">Language & Direction</div>

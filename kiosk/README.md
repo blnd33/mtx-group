@@ -8,7 +8,32 @@ dialog and no extra click.
 Nothing in the app changes — it already calls `window.print()`. This is purely
 how the browser is started.
 
-## Use
+## Easiest: from inside the app
+
+**Settings → Receipt & Invoice → Silent receipt printing** downloads
+`MTX-POS-Setup.bat`, saved as `MTX-POS-Setup-Edge.bat` or `-Chrome.bat` to match
+the browser it came from. Running it once:
+
+- creates an **MTX POS** shortcut on the Desktop and in the Start menu, with
+  the MTX icon, that opens the till with `--kiosk-printing` on its own profile
+- shows which printer is the Windows default, i.e. where receipts will go
+
+Nobody needs the repo for this, which is the point: a shop that installed the
+suite from the browser gets silent printing from the same place. The browser and
+Windows SmartScreen will warn about a downloaded `.bat`; that is expected for
+any unsigned script (Keep → More info → Run anyway).
+
+The browser's own **Install app** window cannot print silently — it shares the
+normal browser process, where the flag never applies (see below). Use the MTX
+POS shortcut for the till.
+
+```bat
+MTX-POS-Setup.bat                      REM browser from the file name, else Edge
+MTX-POS-Setup.bat chrome https://...   REM explicit browser and address
+MTX-POS-Setup.bat remove               REM delete the shortcuts
+```
+
+## Launchers
 
 Double-click one of:
 
