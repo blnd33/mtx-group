@@ -134,10 +134,59 @@ const Sync = (() => {
     const r = await api('/api/login', { method: 'POST', auth: false, body: { store, userId, pin } });
     setToken(store, r.token);
     applyServerTime(r.serverTime);
+    remember(store, userId, pin);
     await cachePin(store, userId, pin); // so this user can sign in offline next time
     return r;
   }
-  function signOut(store) { setToken(store || currentStore(), null); setStatus('needs-login'); }
+  function signOut(store) { forget(); setToken(store || currentStore(), null); setStatus('needs-login'); }
+
+  /* ---- staying signed in to the server ----
+     Server sessions last 12 hours, and someone who signs in while the server
+     is unreachable gets into the app on their offline PIN with no server
+     session at all. Either way sync used to stop dead on "Sign in" until the
+     person signed out and back in.
+
+     So the PIN they signed in with is held here, in memory for this page
+     only — never written to storage, gone on reload, sign-out or store
+     switch — and sync uses it to open a fresh session by itself. A PIN the
+     server rejects (changed, or the user deactivated) is dropped at once,
+     so it can't keep knocking, and the person is asked to sign in again.
+     If the server can't be reached at all nothing arrived there, so the
+     next cycle simply tries again. Any other refusal (rate limit, server
+     error) backs off for a minute: every till in a shop shares one IP and
+     the server allows 30 sign-ins a minute per IP. */
+  let creds = null;
+  let reauthAfter = 0;
+  function remember(store, userId, pin) { creds = { store, userId, pin: String(pin) }; reauthAfter = 0; }
+  function forget() { creds = null; reauthAfter = 0; }
+  const canReauth = (store) => !!creds && creds.store === store;
+
+  async function reauth(store, context) {
+    if (!canReauth(store) || !navigator.onLine || Date.now() < reauthAfter) return false;
+    try {
+      const r = await api('/api/login', { method: 'POST', auth: false, context,
+        body: { store, userId: creds.userId, pin: creds.pin } });
+      setToken(store, r.token);
+      applyServerTime(r.serverTime);
+      reauthAfter = 0;
+      return true;
+    } catch (e) {
+      if (e.code === 'CANCELLED') throw e;
+      if (e.code === 'UNAUTH' || e.code === 'FORBIDDEN') forget();
+      else if (e.code !== 'NET') reauthAfter = Date.now() + 60000;
+      return false;
+    }
+  }
+  /* No usable session, and none could be opened. Still holding a PIN the
+     server hasn't turned down means it just couldn't be reached: that is
+     "offline, reconnecting", not "sign in". */
+  function noSession(store, fallback) {
+    if (canReauth(store)) {
+      const e = new Error('Cannot reach the server — will reconnect by itself'); e.code = 'NET'; return e;
+    }
+    if (fallback) return fallback;
+    const e = new Error('Sign in to the server to upload your changes'); e.code = 'NOAUTH'; return e;
+  }
 
   /* User management — the server hashes PINs, so these never go through the
      generic sync push. Caller should run a cycle() afterward to pull the
@@ -247,9 +296,11 @@ const Sync = (() => {
     const store = currentStore();
     const context = { store, generation };
     if (!configured() || !store) throw new Error('Select a store and connect to the server first');
-    if (!token(store)) {
-      setStatus('needs-login');
-      const e = new Error('Sign in to the server to upload your changes'); e.code = 'NOAUTH'; throw e;
+    // Signed in on the offline PIN, or the session was cleared: open one now.
+    if (!token(store) && !(await reauth(store, context))) {
+      const e = noSession(store);
+      setStatus(e.code === 'NET' ? 'offline' : 'needs-login', e.message);
+      throw e;
     }
 
     state.busy = true;
@@ -260,21 +311,34 @@ const Sync = (() => {
         await DB.prepareServerCache(store);
         checkContext(context);
       }
-      let applied = 0;
-      // Drain edits made while an earlier upload was in flight as well.
-      for (let round = 0; round < 10; round++) {
-        if (!navigator.onLine) { const e = new Error('Offline — changes are waiting to upload'); e.code = 'NET'; throw e; }
-        await pushOnce(store, context);
-        checkContext(context);
-        applied += (await pullOnce(store, opts.onProgress, context)).applied;
-        checkContext(context);
-        // Mark the download complete before the final queue check. An edit
-        // committed during this metadata write still needs another upload.
-        await DB.meta('ready:' + store, true);
-        checkContext(context);
-        state.queued = await DB.outboxCount();
-        checkContext(context);
-        if (!state.queued) break;
+      const drain = async () => {
+        let applied = 0;
+        // Drain edits made while an earlier upload was in flight as well.
+        for (let round = 0; round < 10; round++) {
+          if (!navigator.onLine) { const e = new Error('Offline — changes are waiting to upload'); e.code = 'NET'; throw e; }
+          await pushOnce(store, context);
+          checkContext(context);
+          applied += (await pullOnce(store, opts.onProgress, context)).applied;
+          checkContext(context);
+          // Mark the download complete before the final queue check. An edit
+          // committed during this metadata write still needs another upload.
+          await DB.meta('ready:' + store, true);
+          checkContext(context);
+          state.queued = await DB.outboxCount();
+          checkContext(context);
+          if (!state.queued) break;
+        }
+        return applied;
+      };
+      let applied;
+      try {
+        applied = await drain();
+      } catch (err) {
+        // The session ran out (they last 12h): open a new one and go again.
+        // Anything already pushed was acknowledged, so nothing is sent twice.
+        if (err.code !== 'UNAUTH') throw err;
+        if (!(await reauth(store, context))) throw noSession(store, err);
+        applied = await drain();
       }
       if (state.queued) { const e = new Error('Changes are still waiting to upload'); e.code = 'PENDING'; throw e; }
       state.lastSyncAt = Date.now();
@@ -383,6 +447,7 @@ const Sync = (() => {
     cycle({ silent: true }).catch(() => {});
   }
   function stop() {
+    forget(); // store switch or reconnect — whoever is next signs in afresh
     generation++;
     flight = null;
     state.busy = false;
@@ -396,7 +461,8 @@ const Sync = (() => {
   /* Debounced kick after a local write. */
   function nudge() {
     if (!configured()) return;
-    if (!state.busy || state.status === 'synced') setStatus(!token() ? 'needs-login' : navigator.onLine ? 'pending' : 'offline');
+    const signedOut = !token() && !canReauth(currentStore());
+    if (!state.busy || state.status === 'synced') setStatus(signedOut ? 'needs-login' : navigator.onLine ? 'pending' : 'offline');
     const store = currentStore();
     DB.outboxCount().then((count) => {
       if (store === currentStore()) {
@@ -413,7 +479,7 @@ const Sync = (() => {
     on(fn) { listeners.add(fn); fn(state); return () => listeners.delete(fn); },
     getState: () => state,
     configured, required, serverUrl, setServer, deviceId, token, testConnection,
-    listUsers, login, signOut, hasOfflinePin, verifyPinOffline, saveUser, deleteUser,
+    listUsers, login, signOut, remember, hasOfflinePin, verifyPinOffline, saveUser, deleteUser,
     start, stop, cycle, nudge, fullResync, uploadLocal, disconnect,
     eraseServer,
   };

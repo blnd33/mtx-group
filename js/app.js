@@ -427,6 +427,9 @@ const App = {
             if (!ok) {
               if (await Sync.verifyPinOffline(Tenant.id, selected.id, pin)) {
                 this.user = selected;
+                // No server session yet — sync opens one with this PIN as
+                // soon as the server is reachable, without a second sign-in.
+                Sync.remember(Tenant.id, selected.id, pin);
               } else {
                 btn.disabled = false;
                 const cached = await Sync.hasOfflinePin(Tenant.id, selected.id);

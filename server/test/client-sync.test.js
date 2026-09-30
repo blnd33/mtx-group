@@ -155,6 +155,96 @@ function loadClient(file) {
     nav.onLine = true;
   });
 
+  /* ---- staying signed in: no sign-out / sign-in just to sync ---- */
+  const jwt = require('jsonwebtoken');
+  const TOKEN_KEY = 'mtx.sync.token.melora';
+  const expired = () => jwt.sign({ sub: 'u_admin', name: 'Owner Admin', role: 'Super Admin', store: 'melora',
+    exp: Math.floor(Date.now() / 1000) - 60 }, process.env.JWT_SECRET);
+  const realFetch = global.fetch;
+  let logins = 0;
+  global.fetch = (url, opts) => { if (String(url).endsWith('/api/login')) logins++; return realFetch(url, opts); };
+
+  await test('an expired server session renews itself — no sign-out needed', async () => {
+    localStorage.setItem(TOKEN_KEY, expired());
+    const before = localStorage.getItem(TOKEN_KEY);
+    await DB.put('products', { id: 'p_exp', name: 'Sold after 12h', price: 1000, stock: 1 });
+    await Sync.cycle();
+    assert.strictEqual(await DB.outboxCount(), 0, 'the change uploaded');
+    assert.notStrictEqual(localStorage.getItem(TOKEN_KEY), before, 'a fresh session was opened');
+    assert.strictEqual(Sync.getState().status, 'synced');
+    const { rows } = await db.query('melora', "SELECT data FROM products WHERE id = 'p_exp'");
+    assert.strictEqual(rows[0].data.name, 'Sold after 12h');
+  });
+
+  await test('signing in on the offline PIN connects by itself once online', async () => {
+    Sync.signOut('melora');                         // no server session at all
+    Sync.remember('melora', 'u_admin', '1234');     // what the offline sign-in does
+    await DB.put('products', { id: 'p_off', name: 'Rung up offline', price: 500, stock: 2 });
+    await Sync.cycle();
+    assert.ok(localStorage.getItem(TOKEN_KEY), 'a session was opened without a second sign-in');
+    assert.strictEqual(await DB.outboxCount(), 0);
+    assert.strictEqual(Sync.getState().status, 'synced');
+  });
+
+  await test('a PIN the server rejects is dropped: asks to sign in, never keeps knocking', async () => {
+    await db.query('melora', "UPDATE users SET pin_hash = $1 WHERE id = 'u_admin'", [bcrypt.hashSync('5555', 8)]);
+    localStorage.setItem(TOKEN_KEY, expired());
+    await assert.rejects(Sync.cycle(), (e) => e.code === 'UNAUTH');
+    assert.strictEqual(Sync.getState().status, 'needs-login');
+    logins = 0;
+    await assert.rejects(Sync.cycle());
+    await assert.rejects(Sync.cycle());
+    assert.strictEqual(logins, 0, 'no further sign-in attempts with the old PIN');
+    await db.query('melora', "UPDATE users SET pin_hash = $1 WHERE id = 'u_admin'", [bcrypt.hashSync('1234', 8)]);
+  });
+
+  await test('an unreachable server shows offline, not "sign in", and reconnects on the next cycle', async () => {
+    Sync.signOut('melora');
+    Sync.remember('melora', 'u_admin', '1234');     // signed in on the offline PIN
+    global.fetch = (url, opts) => {
+      if (String(url).endsWith('/api/login')) { logins++; return Promise.reject(new Error('ECONNREFUSED')); }
+      return realFetch(url, opts);
+    };
+    logins = 0;
+    await assert.rejects(Sync.cycle(), (e) => e.code === 'NET');
+    assert.strictEqual(Sync.getState().status, 'offline');
+    await assert.rejects(Sync.cycle(), (e) => e.code === 'NET');
+    assert.strictEqual(logins, 2, 'nothing reached the server, so no reason to wait');
+    global.fetch = realFetch;                        // server back
+    await Sync.cycle();
+    assert.ok(localStorage.getItem(TOKEN_KEY), 'connected without a second sign-in');
+    assert.strictEqual(Sync.getState().status, 'synced');
+  });
+
+  await test('a server that refuses sign-in (rate limit) backs off instead of hammering', async () => {
+    Sync.signOut('melora');
+    Sync.remember('melora', 'u_admin', '1234');
+    global.fetch = (url, opts) => {
+      if (String(url).endsWith('/api/login')) {
+        logins++;
+        return Promise.resolve(new Response(JSON.stringify({ error: 'Too many requests' }), { status: 429 }));
+      }
+      return realFetch(url, opts);
+    };
+    logins = 0;
+    await assert.rejects(Sync.cycle());
+    await assert.rejects(Sync.cycle());
+    await assert.rejects(Sync.cycle());
+    assert.strictEqual(logins, 1, 'one attempt, then a pause — shops share one IP and sign-in is rate-limited');
+    assert.strictEqual(Sync.getState().status, 'offline', 'still not asking anyone to sign in');
+    global.fetch = realFetch;
+  });
+
+  await test('signing out forgets the PIN — sync cannot sign itself back in', async () => {
+    Sync.remember('melora', 'u_admin', '1234');     // fresh remember clears the back-off
+    await Sync.cycle();                              // proves it would work...
+    Sync.signOut('melora');                          // ...until they sign out
+    await assert.rejects(Sync.cycle(), (e) => e.code === 'NOAUTH');
+    assert.strictEqual(localStorage.getItem(TOKEN_KEY), null);
+    assert.strictEqual(Sync.getState().status, 'needs-login');
+  });
+  global.fetch = realFetch;
+
   await test('disconnect turns sync off and clears the queue', async () => {
     await DB.put('logs', { id: 'l1', ts: Date.now(), user: 'x', type: 'login', action: 'signed in' });
     await Sync.disconnect();

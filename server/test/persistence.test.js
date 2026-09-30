@@ -136,7 +136,17 @@ async function test(name, fn) {
       await chrome.Sync.cycle();
       assert.equal(await chrome.DB.outboxCount(), 0);
     });
-    await test('an expired session keeps edits queued until server sign-in', async () => {
+    await test('an expired session renews itself while the person is signed in', async () => {
+      chrome.localStorage.setItem('mtx.sync.token.melora', 'expired');
+      await chrome.DB.put('products', { id: 'renew', name: 'No second sign-in' });
+      await chrome.Sync.cycle({ silent: true });
+      assert.equal(chrome.Sync.getState().status, 'synced');
+      assert.equal(await chrome.DB.outboxCount(), 0);
+      assert.equal((await db.query('melora', "SELECT data FROM products WHERE id = 'renew'")).rows[0].data.name, 'No second sign-in');
+    });
+    await test('an expired session with no PIN in memory keeps edits queued until sign-in', async () => {
+      // What a reload leaves behind: a stale token, and nobody signed in yet.
+      chrome.Sync.signOut('melora');
       chrome.localStorage.setItem('mtx.sync.token.melora', 'expired');
       await chrome.DB.put('products', { id: 'session', name: 'Needs login' });
       await assert.rejects(chrome.Sync.cycle({ silent: true }), /Session expired/);
