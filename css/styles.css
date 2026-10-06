@@ -943,7 +943,6 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 }
 .cp-key.quick:hover { border-color: var(--primary); }
 .cp-x { margin-top: 12px; padding: 16px 0; font-size: 16px; letter-spacing: 2px; }
-.cp-hint { font-size: 11.5px; color: var(--text-3); text-align: center; margin-top: 10px; line-height: 1.55; }
 
 /* category grid — compact rows (icon beside the name) so a shop with many
    categories sees them all without scrolling; still a comfortable touch target. */

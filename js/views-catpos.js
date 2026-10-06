@@ -110,9 +110,6 @@ Views.catpos = async (root) => {
               ${quick.map((q) => `<button class="cp-key quick" data-q="${q}" title="Add ${UI.money(q)} to this category">+${UI.num(q)}</button>`).join('')}
             </div>` : ''}
             <button class="btn primary block cp-x" id="cpX">PRESS X</button>
-            <div class="cp-hint">Number × ${UI.num(CATPOS_STEP)} ${cur.code}. Example: press 5 then X = ${UI.money(5 * CATPOS_STEP)}.${
-              dec ? `<br>Decimals work too: 1.8 then X = ${UI.money(1.8 * CATPOS_STEP)}.` : ''}${
-              quick.length ? `<br>${quick.map((q) => '+' + UI.num(q)).join(' / ')} tops up the category already in the cart.` : ''}</div>
           </div>
         </div>
 
