@@ -945,23 +945,25 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .cp-x { margin-top: 12px; padding: 16px 0; font-size: 16px; letter-spacing: 2px; }
 .cp-hint { font-size: 11.5px; color: var(--text-3); text-align: center; margin-top: 10px; line-height: 1.55; }
 
-/* category grid */
-.cp-cats { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 12px; }
+/* category grid — compact rows (icon beside the name) so a shop with many
+   categories sees them all without scrolling; still a comfortable touch target. */
+.cp-cats { display: grid; grid-template-columns: repeat(auto-fill, minmax(116px, 1fr)); gap: 8px; }
 .cp-cat {
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
-  border: 1px solid var(--border); background: var(--surface); border-radius: var(--r-lg);
-  padding: 18px 12px; cursor: pointer; text-align: center; min-width: 0;
+  display: flex; flex-direction: row; align-items: center; gap: 8px;
+  border: 1px solid var(--border); background: var(--surface); border-radius: var(--r-sm);
+  padding: 8px; min-height: 52px; cursor: pointer; text-align: start; min-width: 0;
   transition: border-color .12s, box-shadow .12s, background .12s, transform .08s;
 }
-.cp-cat:hover { border-color: var(--primary); transform: translateY(-2px); box-shadow: var(--shadow); }
+.cp-cat:hover { border-color: var(--primary); transform: translateY(-1px); box-shadow: var(--shadow); }
 .cp-cat.active { border-color: var(--primary); background: var(--primary-soft); box-shadow: var(--ring); }
 .cp-cat .cp-cat-ico {
-  width: 46px; height: 46px; margin-bottom: 6px; border-radius: 50%;
-  background: var(--primary-soft); display: grid; place-items: center; font-size: 22px;
+  flex: none; width: 30px; height: 30px; border-radius: 50%;
+  background: var(--primary-soft); display: grid; place-items: center; font-size: 15px;
 }
 .cp-cat.active .cp-cat-ico { background: var(--surface); }
-.cp-cat .cp-cat-name { font-weight: 700; font-size: 13.5px; line-height: 1.25; overflow-wrap: anywhere; }
-.cp-cat .cp-cat-sold { font-size: 11.5px; color: var(--text-3); }
+.cp-cat-txt { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.cp-cat .cp-cat-name { font-weight: 700; font-size: 13px; line-height: 1.2; overflow-wrap: anywhere; }
+.cp-cat .cp-cat-sold { font-size: 11px; color: var(--text-3); line-height: 1.25; } /* wraps before the currency, never spills */
 
 /* cart */
 .cp-cart-items { padding: 4px 18px 14px; min-height: 96px; }
@@ -992,6 +994,11 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 [dir="rtl"] .cp-unit { border-left: none; border-right: 1px solid var(--border); }
 .cp-unit:hover { background: var(--primary-soft); color: var(--primary); }
 
+/* Laptop-size tills (1366, 1280): a slimmer calculator leaves the category
+   grid room for two tiles across, so the whole list still fits on screen. */
+@media (max-width: 1400px) {
+  .catpos { grid-template-columns: 300px minmax(0, 1fr) minmax(0, 1.1fr); }
+}
 @media (max-width: 1100px) {
   .catpos { grid-template-columns: 1fr; }
 }
