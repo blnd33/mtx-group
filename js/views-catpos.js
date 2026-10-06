@@ -82,7 +82,7 @@ Views.catpos = async (root) => {
 
   root.innerHTML = `
     <div class="page-head">
-      <div><h1>Cat POS</h1><div class="sub">Sell by category with the calculator — number × <b>${UI.num(CATPOS_STEP)}</b></div></div>
+      <div><h1>Cat POS</h1></div>
     </div>
 
     ${!cats.length ? `
