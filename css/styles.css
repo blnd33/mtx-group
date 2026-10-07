@@ -237,6 +237,22 @@ img, svg { max-width: 100%; }
 
 /* Stat cards */
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+/* A row of five (the dashboard's stock-and-totals row). Five across only
+   from 1280px: a ten-digit dinar figure (9,999,999,999) needs ~130px, and
+   below ~1240 the tile is narrower than that and the number would split
+   mid-figure ("1,137,400," / "000 د.ع"). Narrower screens get two across,
+   with the odd fifth card spanning the row. */
+@media (min-width: 1280px) {
+  .stats.five { grid-template-columns: repeat(5, 1fr); }
+  .stats.five .stat .value { font-size: clamp(18px, 1.45vw, 25px); }
+}
+@media (max-width: 1279.98px) {
+  .stats.five { grid-template-columns: repeat(2, 1fr); }
+  .stats.five > .stat:last-child { grid-column: 1 / -1; }
+}
+@media (max-width: 340px) {
+  .stats.five { grid-template-columns: 1fr; }
+}
 .stat {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
   padding: 18px; position: relative; overflow: hidden; box-shadow: var(--shadow-sm);
@@ -250,7 +266,11 @@ img, svg { max-width: 100%; }
 .stat .ico.c { background: rgba(6,182,212,.15); color: #0891b2; }
 .stat .ico.r { background: rgba(239,68,68,.14); color: var(--red); }
 .stat .label { color: var(--text-2); font-size: 12.5px; font-weight: 600; }
-.stat .value { font-size: 25px; font-weight: 800; margin-top: 2px; letter-spacing: -.02em; }
+.stat .value { font-size: 25px; font-weight: 800; margin-top: 2px; letter-spacing: -.02em;
+  /* Wrap only at the space before the currency, never inside the figure:
+     .stat's overflow-wrap:anywhere was splitting "312,400,000 د.ع" into
+     "312,400,00" / "0 د.ع" on phones, which reads as a different amount. */
+  overflow-wrap: normal; word-break: normal; }
 .stat .delta { font-size: 12px; font-weight: 700; margin-top: 6px; }
 
 /* ------------------------------ Tables ------------------------------ */
@@ -786,7 +806,9 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
      sees today's takings and profit together without swiping. */
   .stats { grid-template-columns: 1fr 1fr; gap: 12px; }
   .stat { padding: 14px; }
-  .stat .value { font-size: 21px; }
+  /* 18px fits a ten-digit dinar figure (9,999,999,999) on a 360px phone;
+     21px did not fit even nine digits reliably. */
+  .stat .value { font-size: 18px; }
   .stat .label { font-size: 11.5px; }
   .stat .ico { width: 34px; height: 34px; font-size: 16px; }
 

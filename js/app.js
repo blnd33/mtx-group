@@ -112,6 +112,7 @@ const Store = (() => {
         totalRevenue: sales.reduce((a, s) => a + s.total, 0),
         cashDrawer: (drawer.opening || 0) + cashSales - cashExp,        // today, always
         invValue: products.reduce((a, p) => a + p.cost * p.stock, 0),   // right now
+        retailValue: products.reduce((a, p) => a + (p.price || 0) * (p.stock || 0), 0), // stock at sale price, right now
         lowStock: products.filter((p) => p.stock <= (p.minStock || 0)), // right now
         marginTxt: periodSales ? (periodProfit / periodSales * 100).toFixed(0) + '% <span>margin</span>' : '—',
         trend, topProducts, cashiers,
