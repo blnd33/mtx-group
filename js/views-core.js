@@ -737,21 +737,49 @@ async function exchangeModal(root, sale, onDone) {
     <div style="background:var(--surface-2);border-radius:14px;padding:14px;margin-top:14px">
       <div class="sum-row"><span class="muted">Returned value</span><span class="mono" id="ex_rt">${UI.money(0)}</span></div>
       <div class="sum-row"><span class="muted">New items value</span><span class="mono" id="ex_nt">${UI.money(0)}</span></div>
+      <div class="sum-row" id="ex_drow" style="display:none"><span class="muted">Discount on new items</span><span class="mono text-red" id="ex_dv"></span></div>
       <div class="sum-row total"><span id="ex_dl">Difference</span><span class="mono" id="ex_diff">${UI.money(0)}</span></div>
-      <div class="row" style="gap:6px;margin-top:10px" id="ex_pay">
-        ${PAY_METHODS.map(([m, ic]) => `<div class="pay-chip ${m === 'Cash' ? 'active' : ''}" data-p="${m}">${ic} ${m === 'Debt' ? 'Account' : m}</div>`).join('')}
+      <div class="row wrap" style="gap:10px;margin-top:10px;align-items:center;justify-content:space-between">
+        <div class="row wrap" style="gap:6px" id="ex_pay">
+          ${PAY_METHODS.map(([m, ic]) => `<div class="pay-chip ${m === 'Cash' ? 'active' : ''}" data-p="${m}">${ic} ${m === 'Debt' ? 'Account' : m}</div>`).join('')}
+        </div>
+        <!-- Lets the new item go at the price the customer got on the invoice:
+             e.g. returned at 13,913 (after discount), new item 15,000 → give
+             1,087 off, or the same %, and it's an even exchange. -->
+        <div class="row" style="gap:8px;align-items:center;margin-inline-start:auto">
+          <span class="muted tiny" style="font-weight:700">Discount</span>
+          <span class="cp-disc-field" style="width:150px">
+            <input id="ex_disc" type="number" min="0" step="any" inputmode="decimal" placeholder="0" aria-label="Discount on new items">
+            <button type="button" class="cp-unit" id="ex_unit" title="Switch amount / percent">${UI.currency().symbol}</button>
+          </span>
+        </div>
       </div>
     </div>`,
     footer: `<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="ex_do" disabled>🔄 Complete Exchange</button>`
   });
 
+  /* Discount on the new items, typed as an amount or a percentage. Never more
+     than the new items are worth. */
+  let discUnit = 'amount';
+  const exDisc = (nt) => {
+    const v = Math.max(0, Number(document.getElementById('ex_disc').value) || 0);
+    const d = discUnit === 'percent' ? nt * Math.min(100, v) / 100 : v;
+    return UI.roundTo(Math.min(nt, d));
+  };
+
   const recalc = () => {
-    // Returns are credited at what was paid; new items sell at today's price.
-    const rt = returnable.reduce((a, l) => a + ret[l.id] * paidUnit(l), 0);
-    const nt = neu.reduce((a, l) => a + l.qty * l.price, 0);
-    const diff = nt - rt;
+    // Returns are credited at what was paid; new items sell at today's price,
+    // less any discount given here.
+    // Rounded like processExchange does, or float dust (15,000 − 1,270.55 −
+    // 13,729.45 = −0.0000000000018) reads as "Refund to customer − 0.00".
+    const rt = UI.roundTo(returnable.reduce((a, l) => a + ret[l.id] * paidUnit(l), 0));
+    const nt = UI.roundTo(neu.reduce((a, l) => a + l.qty * l.price, 0));
+    const d = exDisc(nt);
+    const diff = UI.roundTo(nt - d - rt);
     document.getElementById('ex_rt').textContent = UI.money(rt);
     document.getElementById('ex_nt').textContent = UI.money(nt);
+    document.getElementById('ex_drow').style.display = d > 0 ? '' : 'none'; // .sum-row is flex, so [hidden] would not hide it
+    document.getElementById('ex_dv').textContent = '− ' + UI.money(d);
     document.getElementById('ex_diff').textContent = (diff < 0 ? '− ' : '') + UI.money(Math.abs(diff));
     document.getElementById('ex_dl').textContent = diff > 0 ? 'Customer pays' : diff < 0 ? 'Refund to customer' : 'Even exchange';
     const retQty = returnable.reduce((a, l) => a + ret[l.id], 0);
@@ -817,24 +845,39 @@ async function exchangeModal(root, sale, onDone) {
     if (!hits.length) UI.toast(`No product with barcode ${code}`, 'warn');
   });
   setTimeout(() => scan.focus(), 60);          // ready to scan the moment it opens
+  const discIn = document.getElementById('ex_disc');
+  discIn.addEventListener('input', recalc);
+  discIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') e.preventDefault(); });
+  document.getElementById('ex_unit').onclick = () => {
+    discUnit = discUnit === 'amount' ? 'percent' : 'amount';
+    document.getElementById('ex_unit').textContent = discUnit === 'percent' ? '%' : UI.currency().symbol;
+    recalc();
+  };
   document.getElementById('ex_pay').addEventListener('click', (e) => {
     const c = e.target.closest('[data-p]'); if (!c) return;
     document.querySelectorAll('#ex_pay .pay-chip').forEach((x) => x.classList.remove('active')); c.classList.add('active'); pay = c.dataset.p;
   });
   document.getElementById('ex_do').onclick = () => {
     const returnedLines = returnable.map((l) => ({ ...l, qty: ret[l.id] })).filter((l) => l.qty > 0);
-    processExchange(root, sale, returnedLines, neu, pay, onDone);
+    const nt = neu.reduce((a, l) => a + l.qty * l.price, 0);
+    processExchange(root, sale, returnedLines, neu, pay, onDone, exDisc(nt));
   };
 }
 
-async function processExchange(root, sale, returnedLines, newLines, pay, onDone) {
+async function processExchange(root, sale, returnedLines, newLines, pay, onDone, discount = 0) {
   const store = await DB.setting('store');
-  // Credit the return at what was paid; charge the new items at today's price.
+  // Credit the return at what was paid; charge the new items at today's price
+  // less the discount given in the exchange window.
   const rTotal = UI.roundTo(returnedLines.reduce((a, l) => a + l.qty * paidUnit(l), 0));
   const rCost = UI.roundTo(returnedLines.reduce((a, l) => a + l.qty * (l.cost || 0), 0));
-  const nTotal = UI.roundTo(newLines.reduce((a, l) => a + l.qty * l.price, 0));
+  const nGross = UI.roundTo(newLines.reduce((a, l) => a + l.qty * l.price, 0));
+  const nDisc = UI.roundTo(Math.min(nGross, Math.max(0, discount || 0)));
+  const nTotal = UI.roundTo(nGross - nDisc);
   const nCost = UI.roundTo(newLines.reduce((a, l) => a + l.qty * (l.cost || 0), 0));
   const diff = UI.roundTo(nTotal - rTotal);
+  // Spread the discount over the new lines like an invoice discount, so each
+  // line records what it really sold for (reports and paidUnit read this).
+  const shares = allocateOrderDisc(nDisc, newLines);
   let no = await nextInvoiceNo(2);   // one for the return leg, one for the sale leg
 
   const returnRec = {
@@ -845,8 +888,13 @@ async function processExchange(root, sale, returnedLines, newLines, pay, onDone)
   };
   const saleRec = {
     id: UI.uid('exs'), no, ts: Date.now() + 1, type: 'exchange', refundOf: sale.no, exchange: true, diff,
-    items: newLines.map((l) => ({ id: l.id, name: l.name, price: l.price, cost: l.cost || 0, qty: l.qty })),
-    subtotal: nTotal, discount: 0, tax: 0, total: nTotal, cost: nCost, profit: nTotal - nCost,
+    items: newLines.map((l, idx) => {
+      const share = shares[idx] || 0;
+      return { id: l.id, name: l.name, price: l.price, cost: l.cost || 0, qty: l.qty,
+        itemDisc: 0, orderShare: share, discAmt: share, net: UI.roundTo(l.price * l.qty - share) };
+    }),
+    subtotal: nGross, discount: nDisc, lineDiscount: 0, orderDiscount: nDisc, tax: 0,
+    total: nTotal, cost: nCost, profit: UI.roundTo(nTotal - nCost),
     pay, cashier: App.user.name, customer: sale.customer, status: 'exchanged'
   };
   await DB.put('sales', returnRec);
@@ -862,11 +910,11 @@ async function processExchange(root, sale, returnedLines, newLines, pay, onDone)
   Store.bust();
   UI.close();
   UI.toast(`Exchange done · ${diff >= 0 ? 'collected ' + UI.money(diff) : 'refunded ' + UI.money(-diff)}`, 'info');
-  printReceipt(null, store, exchangeReceiptHTML(sale, returnedLines, newLines, diff, saleRec.no, store));
+  printReceipt(null, store, exchangeReceiptHTML(sale, returnedLines, newLines, diff, saleRec.no, store, nDisc));
   if (onDone) onDone();
 }
 
-function exchangeReceiptHTML(sale, returnedLines, newLines, diff, no, store) {
+function exchangeReceiptHTML(sale, returnedLines, newLines, diff, no, store, discount = 0) {
   // Returned lines are credited at the price paid; new lines at today's price.
   const line = (l, sign, unit) => `<tr><td>${sign}${UI.esc(l.name)}</td><td style="text-align:center">${l.qty}</td><td style="text-align:right">${UI.money(l.qty * unit(l))}</td></tr>`;
   const retUnit = (l) => paidUnit(l);
@@ -882,6 +930,7 @@ function exchangeReceiptHTML(sale, returnedLines, newLines, diff, no, store) {
       <table><tbody>${newLines.map((l) => line(l, '＋ ', newUnit)).join('')}</tbody></table><hr>
       <div style="display:flex;justify-content:space-between"><span>Returned value</span><span>${UI.money(returnedLines.reduce((a, l) => a + l.qty * paidUnit(l), 0))}</span></div>
       <div style="display:flex;justify-content:space-between"><span>New items value</span><span>${UI.money(newLines.reduce((a, l) => a + l.qty * l.price, 0))}</span></div>
+      ${discount > 0 ? `<div style="display:flex;justify-content:space-between"><span>Discount</span><span>− ${UI.money(discount)}</span></div>` : ''}
       <div style="display:flex;justify-content:space-between" class="r-total"><span>${diff >= 0 ? 'CUSTOMER PAID' : 'REFUNDED'}</span><span>${UI.money(Math.abs(diff))}</span></div>
       <hr><div class="r-center">${UI.esc(store?.footer || 'Thank you!')}</div>
       <div class="r-center" style="letter-spacing:2px;font-size:18px;margin-top:6px">*X${no}*</div>
