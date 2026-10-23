@@ -527,6 +527,7 @@ const App = {
             <button class="side-tool" id="sideStore" title="Switch store"><span>⇄</span>Switch store</button>
             <button class="side-tool" id="sideLang" title="Language"><span>🌐</span>Language</button>
             <button class="side-tool" id="sideTheme" title="Toggle theme"><span>🌓</span>Theme</button>
+            <button class="side-tool hide" id="sideInstall" title="Install the app on this device"><span>⇩</span>Install app</button>
           </div>
           <div class="side-user">
             <div class="avatar">${this.user.name.split(' ').map((x) => x[0]).join('').slice(0, 2)}</div>
@@ -550,11 +551,13 @@ const App = {
           <button class="icon-btn" id="themeBtn" title="Toggle theme">🌓</button>
           <button class="btn ghost hide" id="installBtn" title="Install the suite as an app on this device">⇩ Install App</button>
           <button class="icon-btn" id="logoutBtn" title="Sign out">⎋</button>
-          ${this.can('pos') ? '<a class="btn primary" href="#/pos">＋ Sale</a>' : ''}
+          ${this.can('pos') ? '<a class="btn primary" id="topSale" href="#/pos">＋ Sale</a>' : ''}
         </header>
         ${Sync.configured() ? '<div id="syncNotice" class="sync-notice" role="status" aria-live="polite"></div>' : ''}
         <div class="content" id="content"></div>
-      </div>`;
+      </div>
+      <!-- Phones: native-app style bottom tabs (see buildTabbar). Hidden above 860px. -->
+      <nav class="tabbar no-print" id="tabbar" aria-label="Main"></nav>`;
 
     // nav — only modules this role can open; group headers with no visible items are dropped
     const nav = document.getElementById('nav');
@@ -566,6 +569,7 @@ const App = {
       html += `<a class="nav-item" data-route="${n.id}" href="#/${n.id}"><span class="ni">${n.icon}</span>${n.label}${n.id === 'offline' ? '<span class="dot" style="margin-left:auto;background:var(--green)"></span>' : ''}</a>`;
     }
     nav.innerHTML = html;
+    this.buildTabbar();
 
     const doLogout = () => UI.confirm('Sign out of ' + Tenant.get().name + '?', () => {
       this.user = null;
@@ -670,6 +674,7 @@ const App = {
     if (this._viewCleanup) { try { this._viewCleanup(); } catch (e) { /* ignore */ } this._viewCleanup = null; }
     const view = Views[id] || Views.dashboard;
     document.querySelectorAll('.nav-item').forEach((n) => n.classList.toggle('active', n.dataset.route === id));
+    this.syncTabbar(id);
     const title = document.getElementById('pageTitle'); if (title) title.textContent = TITLES[id] || 'Dashboard';
     if (title) this.translate(title);
     // POS gets full-bleed content
@@ -863,32 +868,92 @@ const App = {
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
       window.__deferredPrompt = e;
-      const btn = document.getElementById('installBtn');
-      if (btn) btn.classList.remove('hide');
+      this.showInstall(true);
     });
     window.addEventListener('appinstalled', () => {
       window.__deferredPrompt = null;
-      const btn = document.getElementById('installBtn');
-      if (btn) btn.classList.add('hide');
+      this.showInstall(false);
       UI.toast('MTX Group Retail Suite installed!');
     });
   },
 
   /* Show/hide + wire the header's "Install App" button around whatever
      install prompt the browser has (or hasn't) made available yet. */
+  /* Phones get a bottom tab bar like a native app: the first four screens
+     this role may open, in this order, then "More", which opens the full
+     menu drawer (every other screen, switch store, language, theme, sign
+     out). Built from App.can(), the same check the sidebar uses, so a role
+     never gets a tab for a screen it can't open. */
+  buildTabbar() {
+    const bar = document.getElementById('tabbar');
+    if (!bar) return;
+    const SHORT = { pos: 'POS', catpos: 'Cat POS', finance: 'Finance' };
+    const ORDER = ['dashboard', 'pos', 'catpos', 'invoices', 'reports', 'products', 'inventory', 'expenses', 'customers', 'barcode'];
+    const tabs = ORDER.filter((id) => this.can(id)).slice(0, 4);
+    const byId = Object.fromEntries(NAV.filter((n) => n.id).map((n) => [n.id, n]));
+    bar.innerHTML = tabs.map((id) => `<a class="tab-item" data-tab="${id}" href="#/${id}">
+        <span class="ti">${byId[id].icon}</span><span class="tl">${SHORT[id] || byId[id].label}</span></a>`).join('')
+      + `<button class="tab-item" data-tab="more" type="button"><span class="ti">☰</span><span class="tl">More</span></button>`;
+    bar.querySelector('[data-tab="more"]').onclick = () => {
+      document.getElementById('sidebar').classList.add('open');
+      document.getElementById('backdrop').classList.add('show');
+    };
+    this._tabIds = tabs;
+  },
+  /* Highlight the current screen's tab; anything else lives under "More". */
+  syncTabbar(id) {
+    const bar = document.getElementById('tabbar');
+    if (!bar) return;
+    const own = (this._tabIds || []).includes(id);
+    bar.querySelectorAll('.tab-item').forEach((t) => {
+      const on = own ? t.dataset.tab === id : t.dataset.tab === 'more';
+      t.classList.toggle('active', on);
+      if (on) t.setAttribute('aria-current', 'page'); else t.removeAttribute('aria-current');
+    });
+  },
+
+/* The Install controls: the top-bar button on desktop, and an entry in the
+     drawer on phones (where the top bar drops it). */
+  showInstall(on) {
+    ['installBtn', 'sideInstall'].forEach((id) => {
+      const el = document.getElementById(id); if (el) el.classList.toggle('hide', !on);
+    });
+  },
+  isStandalone() {
+    return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  },
+  /* iPhone/iPad never fire beforeinstallprompt — Safari's Share → "Add to
+     Home Screen" is the only way in, so there we show those steps instead.
+     (iPadOS reports itself as a Mac; the touch points give it away.) */
+  isIOS() {
+    return /iPad|iPhone|iPod/.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  },
+  showIOSInstall() {
+    UI.modal({
+      title: 'Install MTX Suite on this iPhone',
+      body: `<ol style="line-height:2;padding-inline-start:20px;margin:4px 0 0">
+          <li>Tap the <b>Share</b> button <span class="mono" style="padding:1px 6px;border:1px solid var(--border);border-radius:6px">⬆</span> in Safari's toolbar.</li>
+          <li>Scroll down and tap <b>Add to Home Screen</b>.</li>
+          <li>Tap <b>Add</b>. MTX Suite appears on the home screen and opens full screen, like an app.</li>
+        </ol>
+        <p class="tiny muted" style="margin-top:12px">Using Chrome on iPhone? Its Share button (top right) has the same <b>Add to Home Screen</b> option.</p>`,
+      footer: '<button class="btn primary" data-close>Got it</button>',
+    });
+  },
   wireInstallButton() {
-    const btn = document.getElementById('installBtn');
-    if (!btn) return;
-    // Already installed and running standalone — nothing to install.
-    if (window.matchMedia('(display-mode: standalone)').matches || navigator.standalone) return;
-    if (window.__deferredPrompt) btn.classList.remove('hide');
-    btn.onclick = async () => {
+    // Already installed and running as an app: nothing to offer.
+    if (this.isStandalone()) return this.showInstall(false);
+    const ios = this.isIOS();
+    if (window.__deferredPrompt || ios) this.showInstall(true);
+    const install = async () => {
+      if (ios) return this.showIOSInstall();
       const prompt = window.__deferredPrompt;
-      if (!prompt) return UI.toast('Use your browser\'s menu → "Install app" / "Add to Home Screen"', 'info');
+      if (!prompt) return UI.toast("Use your browser's menu → \"Install app\" / \"Add to Home Screen\"", 'info');
       prompt.prompt();
       const { outcome } = await prompt.userChoice;
       window.__deferredPrompt = null;
-      btn.classList.add('hide');
+      this.showInstall(false);
       if (outcome !== 'accepted') UI.toast('Install cancelled', 'info');
       // The installed window still shows the print dialog; silent receipts
       // need the till shortcut from Settings → Receipt & Invoice.
@@ -896,6 +961,9 @@ const App = {
         UI.toast('Installed. For receipts without a print window, see Settings → Receipt & Invoice', 'info');
       }
     };
+    ['installBtn', 'sideInstall'].forEach((id) => {
+      const el = document.getElementById(id); if (el) el.onclick = install;
+    });
   }
 };
 window.App = App;

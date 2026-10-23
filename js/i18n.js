@@ -17,6 +17,8 @@ const I18N = {
     'Barcode': 'الباركود', 'Financial Center': 'المركز المالي', 'Expenses': 'المصروفات', 'Invoices': 'الفواتير',
     'Reports': 'التقارير', 'Customers': 'العملاء', 'Suppliers': 'الموردون', 'Users & Roles': 'المستخدمون والصلاحيات',
     'Settings': 'الإعدادات', 'Backup & Restore': 'النسخ والاستعادة', 'Offline Status': 'حالة الاتصال',
+    // Phone tab bar and install
+    'POS': 'نقطة البيع', 'More': 'المزيد', 'Install app': 'تثبيت التطبيق', 'Got it': 'حسناً',
     // Common actions
     'Save': 'حفظ', 'Cancel': 'إلغاء', 'Edit': 'تعديل', 'Delete': 'حذف', 'Add': 'إضافة', 'Close': 'إغلاق',
     'Print': '🖨 طباعة', 'Apply': 'تطبيق', 'Remove': 'إزالة', 'Confirm': 'تأكيد', 'Please confirm': 'يرجى التأكيد',
