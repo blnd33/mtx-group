@@ -620,6 +620,7 @@ async function refundedQtyMap(originalNo) {
 
 /* Refund dialog — pick items/quantities from a past sale to return. */
 async function refundModal(root, sale, afterDone) {
+  if (!App.isAdmin()) return UI.toast('Only an admin can make a refund', 'warn');
   if (sale.type === 'refund') return UI.toast('This is already a refund receipt', 'warn');
   const done = await refundedQtyMap(sale.no);
   const lines = sale.items.map((i) => ({ ...i, sold: i.qty, already: done[i.id] || 0, remain: i.qty - (done[i.id] || 0) }));
@@ -656,6 +657,7 @@ async function refundModal(root, sale, afterDone) {
 }
 
 async function processRefund(root, sale, picked, afterDone, opts = {}) {
+  if (!App.isAdmin()) return UI.toast('Only an admin can make a refund', 'warn');
   const store = await DB.setting('store');
   // Value the return at what was actually paid, not the shelf price.
   const amount = UI.roundTo(picked.reduce((a, l) => a + l.qty * paidUnit(l), 0));
@@ -948,18 +950,22 @@ async function invoiceDetail(root, sale, store, onDone) {
     if (remaining <= 0) cancelled = true;
   }
   const canAct = (App.canEdit('pos') || App.canEdit('catpos')) && !isRefundRec && !cancelled;
+  // Refund and Cancel hand money back — admins only (see App.isAdmin).
+  const canRefund = canAct && App.isAdmin();
   UI.modal({
     title: (isRefundRec ? 'Receipt' : 'Invoice') + ' #' + sale.no,
     body: receiptHTML(sale, store) + (cancelled && !isRefundRec ? '<div class="badge red" style="display:block;margin-top:10px;text-align:center;padding:8px">This invoice has been fully cancelled / refunded</div>' : ''),
     footer: `<button class="btn ghost" data-close>Close</button><button class="btn ghost" id="d_print">🖨 Print</button>
-      ${canAct ? '<button class="btn ghost" id="d_refund">↩ Refund</button><button class="btn ghost" id="d_exchange">🔄 Exchange</button><button class="btn danger" id="d_cancel">✕ Cancel</button>' : ''}`
+      ${canRefund ? '<button class="btn ghost" id="d_refund">↩ Refund</button>' : ''}
+      ${canAct ? '<button class="btn ghost" id="d_exchange">🔄 Exchange</button>' : ''}
+      ${canRefund ? '<button class="btn danger" id="d_cancel">✕ Cancel</button>' : ''}`
   });
   document.getElementById('d_print').onclick = () => printReceipt(sale, store);
-  if (canAct) {
+  if (canRefund) {
     document.getElementById('d_refund').onclick = () => refundModal(root, sale, onDone);
-    document.getElementById('d_exchange').onclick = () => exchangeModal(root, sale, onDone);
     document.getElementById('d_cancel').onclick = () => cancelInvoice(root, sale, onDone);
   }
+  if (canAct) document.getElementById('d_exchange').onclick = () => exchangeModal(root, sale, onDone);
 }
 
 /* Send a receipt straight to the printer — no preview, no extra click.

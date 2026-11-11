@@ -157,7 +157,7 @@ const I18N = {
     'Purchase History': 'سجل المشتريات', 'Purchase #': 'رقم الشراء', 'Company': 'الشركة',
     // Invoices
     'Invoices & Receipts': 'الفواتير والإيصالات', 'Invoice #': 'رقم الفاتورة', 'Date & Time': 'التاريخ والوقت', 'Refund': 'استرجاع',
-    'Exchange': 'استبدال', 'Cancel': 'إلغاء', 'Cancelled': 'ملغاة', 'Returning': 'المُرتجع', 'New items': 'أصناف جديدة',
+    'Only an admin can make a refund': 'فقط المدير يمكنه إجراء الاسترجاع', 'Exchange': 'استبدال', 'Cancel': 'إلغاء', 'Cancelled': 'ملغاة', 'Returning': 'المُرتجع', 'New items': 'أصناف جديدة',
     'Customer pays': 'يدفع العميل', 'Refund to customer': 'استرجاع للعميل', 'Even exchange': 'استبدال متساوٍ', 'Difference': 'الفرق',
     'Returned value': 'قيمة المُرتجع', 'New items value': 'قيمة الأصناف الجديدة', 'Complete Exchange': 'إتمام الاستبدال', 'No new items yet': 'لا أصناف جديدة بعد',
     // Users

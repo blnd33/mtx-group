@@ -714,6 +714,12 @@ const App = {
   seesShopBooks() {
     return !!this.user && this.user.role !== 'Cashier';
   },
+  /* Refunds (and Cancel, which is a full refund) give money back out of the
+     drawer, so only Super Admin and Admin may do them. Everyone else who can
+     open an invoice can still view and print it. */
+  isAdmin() {
+    return !!this.user && (this.user.role === 'Super Admin' || this.user.role === 'Admin');
+  },
   homeRoute() { return ALL_ROUTES.find((id) => this.can(id)) || 'offline'; },
 
   /* Re-price the whole database into another currency.
