@@ -18,6 +18,7 @@ const I18N = {
     'Reports': 'التقارير', 'Customers': 'العملاء', 'Suppliers': 'الموردون', 'Users & Roles': 'المستخدمون والصلاحيات',
     'Settings': 'الإعدادات', 'Backup & Restore': 'النسخ والاستعادة', 'Offline Status': 'حالة الاتصال',
     // AI Assistant
+    'Clear chat': 'مسح المحادثة', 'Value': 'القيمة', 'Units': 'الوحدات', 'Spent': 'المصروف', 'Gross profit': 'الربح الإجمالي', 'Net profit': 'صافي الربح',
     'AI Assistant': 'المساعد الذكي',
     'Tap a question — the assistant reads your live sales, stock, expenses and customers and answers it.': 'اضغط على سؤال — يقرأ المساعد مبيعاتك ومخزونك ومصروفاتك وعملاءك مباشرةً ويجيب عليه.',
     '🩺 Full check-up': '🩺 فحص شامل',
@@ -125,7 +126,7 @@ const I18N = {
     // POS
     'All Items': 'كل الأصناف', 'Current Order': 'الطلب الحالي', 'Walk-in Customer': 'عميل عابر',
     '👤 Customer': '👤 العميل', '％ Discount': '％ خصم', '⏸ Hold': '⏸ تعليق', 'Cash': 'نقدي', 'Card': 'بطاقة',
-    'Split': 'مقسّم', 'Account': 'آجل', 'Exact': 'المبلغ بالضبط', 'Clear chat': 'مسح المحادثة', 'Change due': 'الباقي',
+    'Split': 'مقسّم', 'Account': 'آجل', 'Exact': 'المبلغ بالضبط', 'Clear': 'مسح', 'Change due': 'الباقي',
     '💵 Cash': '💵 نقدي', '💳 Card': '💳 بطاقة', '🔀 Split': '🔀 مقسّم', '📝 Account': '📝 آجل',
     'Cart is empty': 'السلة فارغة', 'Tap products to add': 'اضغط على المنتجات للإضافة', 'Select Customer': 'اختر العميل',
     'Apply Discount': 'تطبيق خصم', 'Beverages': 'مشروبات', 'Snacks': 'وجبات خفيفة', 'Groceries': 'بقالة',
