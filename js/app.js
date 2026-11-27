@@ -129,6 +129,7 @@ const NAV = [
   { id: 'dashboard', label: 'Dashboard', icon: '📊' },
   { id: 'pos', label: 'POS Checkout', icon: '🛒' },
   { id: 'catpos', label: 'Cat POS', icon: '🧮' },
+  { id: 'assistant', label: 'AI Assistant', icon: '🤖' },
   { group: 'Catalog' },
   { id: 'products', label: 'Products', icon: '📦' },
   { id: 'categories', label: 'Categories', icon: '🏷️' },
@@ -175,6 +176,9 @@ const READONLY = {
 /* Modules excluded from the '*' default so Admin doesn't start with them —
    Super Admin can still switch them on for any role from Users & Permissions. */
 const SUPER_ONLY = ['discounts'];
+/* Modules only Super Admin and Admin can ever open. Fixed in code and kept out
+   of the permissions matrix, so no role can be switched on for them. */
+const ADMIN_ONLY = ['assistant'];
 
 /* ---------------- App core ---------------- */
 const App = {
@@ -692,6 +696,8 @@ const App = {
   /* ---- permission helpers ---- */
   can(id) {
     if (!this.user) return false;
+    // The AI Assistant reads the whole business — admins only, not editable.
+    if (ADMIN_ONLY.includes(id)) return this.isAdmin();
     if (this.user.role === 'Super Admin') return true; // always full access, not editable
     const list = this.access[this.user.role];
     return !!(list && list.includes(id));

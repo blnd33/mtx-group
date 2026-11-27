@@ -16,7 +16,7 @@ Views.users = async (root) => {
         <div class="row wrap" style="gap:6px;margin-top:6px"><span class="badge blue">All modules — full access</span></div></div>`;
     }
     const list = App.access[role] || [];
-    const mods = ALL_ROUTES.map((id) => {
+    const mods = ALL_ROUTES.filter((id) => !ADMIN_ONLY.includes(id)).map((id) => {
       const on = list.includes(id);
       if (isSuperAdmin) return `<span class="badge ${on ? 'green' : 'gray'} perm-toggle" data-role="${UI.esc(role)}" data-mod="${id}" style="cursor:pointer;user-select:none" title="${on ? 'Visible — click to hide' : 'Hidden — click to show'}">${on ? '✓ ' : ''}${TITLES[id] || id}</span>`;
       return on ? `<span class="badge gray">${TITLES[id] || id}</span>` : '';

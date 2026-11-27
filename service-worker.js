@@ -8,7 +8,7 @@
 /* Bump this on every deploy. The shell is served cache-first, so a stale
    cache will keep showing the previous build's HTML/CSS/JS until the name
    changes and `activate` sweeps the old one away. */
-const CACHE = 'mtx-shell-v26';
+const CACHE = 'mtx-shell-v27';
 
 // NOTE: we cache the clean root ('./') only — never './index.html', which some
 // static servers 301-redirect to './'. A cached redirected response cannot be
@@ -26,6 +26,7 @@ const SHELL = [
   './js/seed.js',
   './js/views-core.js',
   './js/views-catchup.js',
+  './js/views-assistant.js',
   './js/views-catpos.js',
   './js/views-ops.js',
   './js/views-finance.js',
